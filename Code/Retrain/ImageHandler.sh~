@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+TARGET_DIRECTORY="$HOME/Data/galaxy_photos"
+if[ -d "$TARGET_DIRECTORY" ]; then
+    if[ -L "$TARGET_DIRECTORY"]; then
+	echo "This is a symbolic link, not a directory!"
+	exit 0
+    else
+	echo "The $TARGET_DIRECTORY already exists."
+    fi
+else 
+    mkdir $TARGET_DIRECTORY
+    echo "$TARGET_DIRECTORY created."
+fi
+
+DATA_DIRECTORY=("/data1/LEAPSData/LEAPS1/bonsai_simulations/","/data1/LEAPSData/LEAPS2/bonsai_simulations/","/data1/LEAPSData/LEAPS3/bonsai_simulations/","/data1/LEAPSData/LEAPS4/bonsai_simulations/")
