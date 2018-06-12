@@ -124,6 +124,7 @@ import collections
 from datetime import datetime
 import hashlib
 import os.path
+import os.environ
 import random
 import re
 import sys
@@ -132,7 +133,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_hub as hub
 
-CUDA_VISIBLE_DEVICES="0" 
+os.environ['CUDA_VISIBLE_DEVICES=0'] 
 
 FLAGS = None
 
