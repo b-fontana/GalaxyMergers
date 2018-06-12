@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+TARGET_DIRECTORY="$HOME/Data/GalaxyZoo/dataset/"
+##############################
+#####Parsing##################
+##############################
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+key="$1"
+case $key in
+    -c|--class)
+    CATEGORY="$2"
+    shift
+    shift
+    ;;
+    -t|--type)
+    TYPE="$2"
+    shift
+    shift
+    ;;
+    -d|--direction)
+    DIRECTION="$2"
+    shift
+    shift
+    ;;
+    -h|--help)
+    echo "Options: -c (choose the directory of the class where the files will be renamed)"
+    shift
+    ;;
+    --default)
+    DEFAULT=YES
+    shift
+    ;;
+    *)    # unknown option                                                                              
+    POSITIONAL+=("$1") # save it in an array for later
+    shift # past argument
+    ;;
+esac
+done
+set -- "${POSITIONAL[@]}" # restore positional parameters     
+
+##############################
+#####Checks###################
+##############################
+if [ -z "$CATEGORY" ]; then
+    echo "Specify the directory of the category (merger or noninteracting with the'-c' option)!"
+    exit 0
+fi
+
+if [ -z "$TYPE" ]; then
+    echo "Specify the type (training, test or validation with the '-t' option)!"
+    exit 0
+fi
+
+if [ -z "$DIRECTION" ]; then
+    echo "Specify the direction (surface-deep or deep-surface with the '-d' option)!"
+    exit 0
+fi
+
+if [ "$DIRECTION" != "surface-deep" ] && [ "$DIRECTION" != "deep-surface" ]; then
+    echo "The direction you introduced is not valid."
+    exit 0
+fi
+
+if [ ! -d "$TARGET_DIRECTORY$CATEGORY/$TYPE" ]; then
+    echo "The $TARGET_DIRECTORY$CATEGORY/$TYPE does not exist!"
+    exit 0
+fi
+
+##############################
+#####Renaming#################
+##############################
+if [ "$DIRECTION" == "deep-surface" ]; then
+    cd "$TARGET_DIRECTORY$CATEGORY/$TYPE/"
+    for i in *.jpeg; do
+	mv -i "$i" "$TARGET_DIRECTORY$CATEGORY/${TYPE}_${i}"
+	echo "$i"
+    done
+elif [ "$DIRECTION" == "surface-deep" ]; then
+    cd "$TARGET_DIRECTORY$CATEGORY/"
+    echo "$TARGET_DIRECTORY$CATEGORY/"
+    EXTENSION=".jpeg"
+    for i in *jpeg; do 
+	mv -i "$TARGET_DIRECTORY$CATEGORY/$i" "$TARGET_DIRECTORY$CATEGORY/$TYPE/${i#*_}"
+	#tmp=${picture%-*}
+        #tmp2=${tmp#*00}
+    done
+fi
+exit 0
