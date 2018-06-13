@@ -74,7 +74,6 @@ if [ "$DIRECTION" == "deep-surface" ]; then
     cd "$TARGET_DIRECTORY$CATEGORY/$TYPE/"
     for i in *.jpeg; do
 	mv -i "$i" "$TARGET_DIRECTORY$CATEGORY/${TYPE}_${i}"
-	echo "$i"
     done
 elif [ "$DIRECTION" == "surface-deep" ]; then
     cd "$TARGET_DIRECTORY$CATEGORY/"
@@ -82,8 +81,6 @@ elif [ "$DIRECTION" == "surface-deep" ]; then
     EXTENSION=".jpeg"
     for i in *jpeg; do 
 	mv -i "$TARGET_DIRECTORY$CATEGORY/$i" "$TARGET_DIRECTORY$CATEGORY/$TYPE/${i#*_}"
-	#tmp=${picture%-*}
-        #tmp2=${tmp#*00}
     done
 fi
 exit 0
