@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-TARGET_DIRECTORY="$HOME/Data/galaxy_photos2/"
+TARGET_DIRECTORY="/data1/alves/galaxy_photos_gap/"
 declare -a TARGET_SUBDIRECTORY=("before/" "during/" "after/")
-##BOUNDARY_VALUES=(350 550)
-BOUNDARY_VALUES=(400 530)
+BOUNDARY_VALUES=(360 390 510 540)
+##BOUNDARY_VALUES=(400 530)
 
 CreateDirectory () {
     if [ -d "$1" ]; then
@@ -66,9 +66,10 @@ for dir in "${DATA_DIRECTORY[@]}"; do
 		if [ "$tmp2" -le "${BOUNDARY_VALUES[0]}" ]; then
 		    CreateDirectory "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[0]}"
 		    cp -i "${picture}" "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[0]}$EXTRA_CHAR${FOLDER_VALUES_COUNTER}_$picture" 
-		elif [ "$tmp2" -gt "${BOUNDARY_VALUES[0]}" -a "$tmp2" -lt "${BOUNDARY_VALUES[1]}" ]; then		    CreateDirectory "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[1]}"
+		elif [ "$tmp2" -gt "${BOUNDARY_VALUES[1]}" -a "$tmp2" -lt "${BOUNDARY_VALUES[2]}" ]; then		    
+		    CreateDirectory "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[1]}"
                     cp -i "${picture}" "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[1]}$EXTRA_CHAR${FOLDER_VALUES_COUNTER}_$picture"
-		else 
+		elif [ "$tmp2" -gt "${BOUNDARY_VALUES[3]}" ]; then		     
 		    CreateDirectory "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[2]}"
                     cp -i "${picture}" "$TARGET_DIRECTORY${TARGET_SUBDIRECTORY[2]}$EXTRA_CHAR${FOLDER_VALUES_COUNTER}_$picture"
 	        fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-TARGET_DIRECTORY="$HOME/Data/GalaxyZoo/dataset/"
+TARGET_DIRECTORY="/data1/alves/GalaxyZoo/dataset/"
 ##############################
 #####Parsing##################
 ##############################
@@ -43,7 +43,7 @@ set -- "${POSITIONAL[@]}" # restore positional parameters
 #####Checks###################
 ##############################
 if [ -z "$CATEGORY" ]; then
-    echo "Specify the directory of the category (merger or noninteracting with the'-c' option)!"
+    echo "Specify the directory of the category (merger or noninteracting with the '-c' option)!"
     exit 0
 fi
 

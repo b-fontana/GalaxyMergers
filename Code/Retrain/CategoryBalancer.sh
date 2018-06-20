@@ -27,9 +27,9 @@ done
 set -- "${POSITIONAL[@]}" # restore positional parameters  
 
 #defining global variables
-PICTURE_DIRECTORY="$HOME/Data/galaxy_photos2/"
+PICTURE_DIRECTORY="/data1/alves/galaxy_photos_gap/"
 declare -a PICTURE_SUBDIRECTORY=("before/" "during/" "after/")
-TARGET_DIRECTORY="$HOME/Data/galaxy_photos_balanced2/"
+TARGET_DIRECTORY="/data1/alves/galaxy_photos_balanced_gap/"
 
 CreateDirectory () {
     if [ -d "$1" ]; then
@@ -80,5 +80,5 @@ for subdir in "${PICTURE_SUBDIRECTORY[@]}"; do
     ls "$PICTURE_DIRECTORY$subdir" | shuf -n "$MINIMUM" | xargs -i cp -i "$PICTURE_DIRECTORY$subdir"{} "$TARGET_DIRECTORY$subdir"
     done
 
-echo "Files moved. Each category has now $MINIMUM files."
+echo "Files copied. Each category has now $MINIMUM files."
 exit 0
