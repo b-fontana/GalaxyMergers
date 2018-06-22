@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-TARGET_DIRECTORY="/data1/alves/galaxy_photos_gap/"
+TARGET_DIRECTORY="/data1/alves/galaxy_photos_bckg/"
 declare -a TARGET_SUBDIRECTORY=("before/" "during/" "after/")
 BOUNDARY_VALUES=(360 390 510 540)
 ##BOUNDARY_VALUES=(400 530)
@@ -29,15 +29,17 @@ esac
 CreateDirectory "$TARGET_DIRECTORY"
 
 ##Loop through the pictures and store them in their respective subfolder according to some class
-declare -a DATA_DIRECTORY=("/data1/LEAPSData/LEAPS1/bonsai_simulations/" 
-                           "/data1/LEAPSData/LEAPS2/bonsai_simulations/" 
-			   "/data1/LEAPSData/LEAPS3/bonsai_simulations/" 
-			   "/data1/LEAPSData/LEAPS4/bonsai_simulations/")
+declare -a DATA_DIRECTORY=("/data1/LEAPSData/LEAPS1b/bonsai_simulations/" 
+                           "/data1/LEAPSData/LEAPS2b/bonsai_simulations/")
+			   #"/data1/LEAPSData/LEAPS3/bonsai_simulations/" 
+			   #"/data1/LEAPSData/LEAPS4/bonsai_simulations/")
 declare -a FOLDER_VALUES=("0.25" "0.5" "0.75" "1" "1.25" "1.5")
 DATA_DIRECTORY_COUNTER=0
 FOLDER_VALUES_COUNTER=0
 for dir in "${DATA_DIRECTORY[@]}"; do
     DATA_DIRECTORY_COUNTER=$(($DATA_DIRECTORY_COUNTER + 1))
+    #there are four possibilites included
+    #the number has to be equal or larger than the number of data directories
     if [ "$DATA_DIRECTORY_COUNTER" -eq 1 ]; then
 	EXTRA_CHAR="a"
     elif [ "$DATA_DIRECTORY_COUNTER" -eq 2 ]; then
@@ -49,14 +51,17 @@ for dir in "${DATA_DIRECTORY[@]}"; do
     fi
     for value1 in "${FOLDER_VALUES[@]}"; do
 	for value2 in "${FOLDER_VALUES[@]}"; do
+
+	    ########################################################################
+	    #this section has to be changed according to the names of the subfolders
 	    FOLDER_VALUES_COUNTER=$(($FOLDER_VALUES_COUNTER + 1))
-	    if [ "$DATA_DIRECTORY_COUNTER" -le 2 ]; then
+	    if [ "$DATA_DIRECTORY_COUNTER" -eq 1 ]; then
+		INTERMEDIATE_DIRECTORY="s_${value1}_m_${value2}_lMW_0_bMW_90/"
+	    elif [ "$DATA_DIRECTORY_COUNTER" -eq 2 ]; then 
 		INTERMEDIATE_DIRECTORY="s_${value1}_m_${value2}/"
-	    elif [ "$DATA_DIRECTORY_COUNTER" -eq 3 ]; then #LEAPS3/ subfolder
-		INTERMEDIATE_DIRECTORY="s_${value1}_m_${value2}_lMW_90_bMW_90/"
-	    else #LEAPS4/ subfolder
-		INTERMEDIATE_DIRECTORY="s_${value1}_m_${value2}_lMW_-90_bMW_-90/"
 	    fi
+	    #######################################################################
+
 	    cd "$dir$INTERMEDIATE_DIRECTORY"
 	    for picture in *jpg; do
 		#Extract only the relevant number from the name of the picture
