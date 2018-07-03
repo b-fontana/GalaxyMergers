@@ -17,6 +17,9 @@ import numpy as np
 from PIL import Image
 import time
 
+def loop_info(percentage, time1, time2):
+    print("%f\% finished. Iteration time: %f" % (percentage, time2-time1))
+
 def picture_decoder(tf_session, picture_name, height, width):
     """
     Part of a tensorflow graph that converts ('decodes') a picture into a tensor and performs
@@ -96,8 +99,8 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                 for i,pict in enumerate( glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax] ):
                     index = i + iClass*pict_array_length[iClass]
                     if index%20 == 0:
-                        print(index+1, "pictures have been decoded", 
-                              float(index)/float(pict_array_length_total)*100, "%")
+                        loop_info(float(index)/float(pict_array_length_total),previous_time,time.time())
+                        previous_time = time.time()
                     tmp_picture = picture_decoder(sess, pict, input_height, input_width) #ndarray with dtype=float32 
                     Example = tf.train.Example(features=tf.train.Features(feature={
                         'height': _int64_feature(input_height),
@@ -165,6 +168,13 @@ def load_data(filename):
     """
 
 
+def unison_shuffle(a, b):
+    rng_state = numpy.random.get_state()
+    numpy.random.shuffle(a)
+    numpy.random.set_state(rng_state)
+    numpy.random.shuffle(b)
+
+
 def split_data(x, y, fraction=0.8):
     """
     Splits the data into 'training' and 'testing' datasets according to the specified fraction.
@@ -182,6 +192,9 @@ def split_data(x, y, fraction=0.8):
     if len(x) != len(y):
         print("ERROR: The arrays of the values and of the labels must have the same size!")
         sys.exit()
+    
+    ###Shuffling###
+    unison_shuffle(x, y)
     
     splitting_value = int(len(x)*fraction)
     return x[:splitting_value], y[:splitting_value], x[splitting_value:], y[splitting_value:]
