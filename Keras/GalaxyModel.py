@@ -15,6 +15,7 @@ from tensorflow.python.keras.callbacks import EarlyStopping
 import os, sys, glob, argparse
 import numpy as np
 from PIL import Image
+import time
 
 def picture_decoder(tf_session, picture_name, height, width):
     """
@@ -40,7 +41,6 @@ def picture_decoder(tf_session, picture_name, height, width):
 
     final_tensor =  tf.image.resize_bilinear( picture_4d, resize_shape_as_int )
     return tf_session.run( final_tensor, feed_dict={picture_name_tensor: picture_name} )
-
 
 def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jpg'):
     """
@@ -86,29 +86,28 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
         #Define a counter (the saving takes a while...)
         pict_array_length = np.zeros(len(Classes), dtype=np.uint32)
         for iClass, nameClass in enumerate(Classes):
-            for i,pict in enumerate(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[:200]):
-                pict_array_length[iClass] = len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[:200])
-                pict_array_length_total =+ pict_array_length[iClass]
+            pict_array_length[iClass]=len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax])
+            print(pict_array_length[iClass])
+        pict_array_length_total = sum(pict_array_length)
 
         #Write to a .tfrecord file
-        Writer = tf.python_io.TFRecordWriter(FLAGS.saved_data_name)
-        for iClass, nameClass in enumerate(Classes):
-            for i,pict in enumerate(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[:200]):
-                index = i + iClass*pict_array_length[iClass]
-                if index%20 == 0:
-                    print(index+1, "pictures have been decoded", 
-                          float(index)/float(pict_array_length_total)*100, "%")
-                tmp_picture = picture_decoder(sess, pict, input_height, input_width) #ndarray with dtype=float32 
-                
-                Example = tf.train.Example(features=tf.train.Features(feature={
-                    'height': _int64_feature(input_height),
-                    'width': _int64_feature(input_width),
-                    'depth': _int64_feature(input_depth),
-                    'picture_raw': _bytes_feature(tmp_picture.tostring()),
-                    'label': _int64_feature(iClass)}))
+        with tf.python_io.TFRecordWriter(FLAGS.saved_data_name) as Writer:
+            for iClass, nameClass in enumerate(Classes):
+                for i,pict in enumerate( glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax] ):
+                    index = i + iClass*pict_array_length[iClass]
+                    if index%20 == 0:
+                        print(index+1, "pictures have been decoded", 
+                              float(index)/float(pict_array_length_total)*100, "%")
+                    tmp_picture = picture_decoder(sess, pict, input_height, input_width) #ndarray with dtype=float32 
+                    Example = tf.train.Example(features=tf.train.Features(feature={
+                        'height': _int64_feature(input_height),
+                        'width': _int64_feature(input_width),
+                        'depth': _int64_feature(input_depth),
+                        'picture_raw': _bytes_feature(tmp_picture.tostring()),
+                        'label': _int64_feature(iClass)
+                    }))
     
-                Writer.write(Example.SerializeToString())
-        Writer.close()    
+                    Writer.write(Example.SerializeToString())
         print("Shape of a single saved picture:", tmp_picture.shape)
 
 def load_data(filename):
@@ -132,9 +131,9 @@ def load_data(filename):
     for i, element in enumerate(iterator):
         Example = tf.train.Example()
         Example.ParseFromString(element)
-        height = int(Example.features.feature['height'].int64_list.value[0])
-        width = int(Example.features.feature['width'].int64_list.value[0])
-        depth = int(Example.features.feature['depth'].int64_list.value[0])
+        height = 300#int(Example.features.feature['height'].int64_list.value[0])
+        width = 300#int(Example.features.feature['width'].int64_list.value[0])
+        depth = 3#int(Example.features.feature['depth'].int64_list.value[0])
         img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
         pict_array.append( np.fromstring(img_string, dtype=np.float32).reshape((height,width,depth)) )
         label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
@@ -281,7 +280,11 @@ def main(_):
     if FLAGS.use_saved_data != 0 and FLAGS.use_saved_data != 1:
         print("The 'use_saved_data' is a boolean. Only the '0' and '1' values can be accepted.")
         sys.exit()
+    if FLAGS.cutmin >= FLAGS.cutmax:
+        print("The 'cutmin' option has to be smaller than the 'cutmax' option.")
+        sys.exit()
 
+    start_time = time.time()
     img_rows, img_cols = 300, 300
     ###Saving the data if requested###
     if FLAGS.use_saved_data == 0:
@@ -290,6 +293,8 @@ def main(_):
         print("yes")
         save_data(mypath, myclasses, img_rows, img_cols, 3, 'jpg')
 
+    print("Total time:", time.time() - start_time)
+    sys.exit()
     ###Training or predicting###
     if FLAGS.mode == 'train':
         train(FLAGS.saved_data_name, img_rows, img_cols, 'jpg')
@@ -334,6 +339,18 @@ if __name__ == '__main__':
         type=str,
         default='galaxy_pictures.tfrecord',
         help="Name of the file where the data is going to be saved. It must have a 'tfrecord' extension."
+    )
+    parser.add_argument(
+        '--cutmin',
+        type=int,
+        default=0,
+        help='Left range of the array of pictures to be saved for each class.'
+    )
+    parser.add_argument(
+        '--cutmax',
+        type=int,
+        default=999999,
+        help='Right range of the array of pictures to be saved for each class.'
     )
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(main=main, argv=[sys.argv[0]]+unparsed)
