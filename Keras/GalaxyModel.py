@@ -17,8 +17,29 @@ import numpy as np
 from PIL import Image
 import time
 
-def loop_info(percentage, time1, time2):
-    print("%f\% finished. Iteration time: %f" % (percentage, time2-time1))
+os.environ["CUDA_VISIBLE_DEVICES"]="1,2,3"
+
+class LoopInfo:
+    """Handles all loop-related informations
+    
+    Arguments:
+    1. total_len: number of items the loop will process'
+    """
+    def __init__(self, total_len=-1):
+        self.total_len = total_len
+        self.time_init = time.time()
+
+    def loop_print(self, it, step_time):
+        """
+        The time is measured from the last loop_info call
+        """
+        subtraction = step_time - self.time_init
+        if self.total_len == -1:
+            print("{0:d} iteration. Iteration time: {1:.3f}" .format(it, subtraction))
+        else:
+            percentage = (float(it)/self.total_len)*100
+            print("{0:.2f}% finished. Iteration time: {1:.3f}" .format(percentage, subtraction))
+        self.time_init = time.time()
 
 def picture_decoder(tf_session, picture_name, height, width):
     """
@@ -49,16 +70,13 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
     """
     Creates two arrays: one with pictures and the other with numerical labels
     Each class must have a separate subfolder, and all classes must lie inside the same data folder.
-
     Arguments:
     1. DataFolder (string): folder where all the pictures from all the classes are stored.
     2. Classes (tuple): classes to be considered.
     3. Extension (string): extension of the pictures inside DataFolder. Only 'jpg' is supported. 
-
     Stores:
     1. A 4d array with pictures and another array with labels. The first array follows the following format: (index, height_in_pixels, width_in_pixels, numer_of_channels)
     2. The given classes are converted into numerical labels, starting from zero. For example, if three classes are present, 'a', 'b' and 'c', then the labels with respectively be 0, 1 and 2.
-
     Returns: nothing
     """
     ###Functions to be used for storing the files as TFRecords###
@@ -87,20 +105,22 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
         sess.run(init)
         
         #Define a counter (the saving takes a while...)
-        pict_array_length = np.zeros(len(Classes), dtype=np.uint32)
+        indiv_len = np.zeros(len(Classes), dtype=np.uint32)
         for iClass, nameClass in enumerate(Classes):
-            pict_array_length[iClass]=len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax])
-            print(pict_array_length[iClass])
-        pict_array_length_total = sum(pict_array_length)
+            indiv_len[iClass]=len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax])
+        total_len = sum(indiv_len)
 
         #Write to a .tfrecord file
-        with tf.python_io.TFRecordWriter(FLAGS.saved_data_name) as Writer:
+        loop = LoopInfo(total_len)
+        with tf.python_io.TFRecordWriter(FLAGS.save_data_name) as Writer:
             for iClass, nameClass in enumerate(Classes):
                 for i,pict in enumerate( glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax] ):
-                    index = i + iClass*pict_array_length[iClass]
-                    if index%20 == 0:
-                        loop_info(float(index)/float(pict_array_length_total),previous_time,time.time())
-                        previous_time = time.time()
+                    if iClass == 0:
+                        index = i 
+                    else:
+                        index = i + iClass*indiv_len[iClass-1]
+                    if index%50 == 0:
+                        loop.loop_print(index, time.time())
                     tmp_picture = picture_decoder(sess, pict, input_height, input_width) #ndarray with dtype=float32 
                     Example = tf.train.Example(features=tf.train.Features(feature={
                         'height': _int64_feature(input_height),
@@ -113,37 +133,39 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                     Writer.write(Example.SerializeToString())
         print("Shape of a single saved picture:", tmp_picture.shape)
 
-def load_data(filename):
+
+def load_data(filenames):
     """
-    Loads a TFRecords binary file containing pictures information and converts it back to numpy array format. The function does not know before-hand how many pictures are stored in 'filename'.
+    Loads one or more TFRecords binary file(s) containing pictures information and converts it/them back to numpy array format. The function does not know before-hand how many pictures are stored in 'filenames'.
     
     Arguments:
-    1. The name of the file to load.
+    1. The names of the files to load.
     
     Returns:
     1. A 4d array with pictures and another array with labels. The first array follows the following format: (index, height_in_pixels, width_in_pixels, numer_of_channels)
     2. The given classes are converted into numerical labels, starting from zero. For example, if three classes are present, 'a', 'b' and 'c', then the labels with respectively be 0, 1 and 2.
     """
-    if not os.path.isfile(filename):
-        print("The data could not be loaded. Please make sure the filename is correct.")
-        sys.exit()
+    for filename in filenames:
+        if not os.path.isfile(filename):
+            print("The data stored in", filename, 
+                  "could not be loaded. Please make sure the filename is correct.")
+            sys.exit()
         
     pict_array, label_array = ([] for i in range(2)) #such a fancy initialization!
-    iterator = tf.python_io.tf_record_iterator(path=filename)
-
-    for i, element in enumerate(iterator):
-        Example = tf.train.Example()
-        Example.ParseFromString(element)
-        height = 300#int(Example.features.feature['height'].int64_list.value[0])
-        width = 300#int(Example.features.feature['width'].int64_list.value[0])
-        depth = 3#int(Example.features.feature['depth'].int64_list.value[0])
-        img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
-        pict_array.append( np.fromstring(img_string, dtype=np.float32).reshape((height,width,depth)) )
-        label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
-        #if i%20 == 0:
-         #           print(i+1, "pictures have been loaded",
-          #                float(i)/float(len(iterator))*100, "%")
-
+    for filename in filenames:
+        iterator = tf.python_io.tf_record_iterator(path=filename)
+        loop = LoopInfo()
+        for i, element in enumerate(iterator):
+            Example = tf.train.Example()
+            Example.ParseFromString(element)
+            height = int(Example.features.feature['height'].int64_list.value[0])
+            width = int(Example.features.feature['width'].int64_list.value[0])
+            depth = int(Example.features.feature['depth'].int64_list.value[0])
+            img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
+            pict_array.append(np.fromstring(img_string,dtype=np.float32).reshape((height,width,depth)))
+            label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
+            if i%200 == 0:
+                loop.loop_print(i,time.time())
     pict_array = np.array(pict_array)
     label_array = np.array(label_array)
     print("Shape of the loaded array of pictures:", pict_array.shape)
@@ -169,10 +191,10 @@ def load_data(filename):
 
 
 def unison_shuffle(a, b):
-    rng_state = numpy.random.get_state()
-    numpy.random.shuffle(a)
-    numpy.random.set_state(rng_state)
-    numpy.random.shuffle(b)
+    rng_state = np.random.get_state()
+    np.random.shuffle(a)
+    np.random.set_state(rng_state)
+    np.random.shuffle(b)
 
 
 def split_data(x, y, fraction=0.8):
@@ -201,12 +223,12 @@ def split_data(x, y, fraction=0.8):
 
 
 
-def train(filename, img_rows, img_cols, extension):
+def train(filenames, img_rows, img_cols, extension):
     """
-    Trains a model
+    Trains a model using Keras
     """
-    num_classes, epochs, batch_size = 2, 100, 32
-    x, y = load_data(filename)
+    num_classes, epochs, batch_size = 2, 15, 16
+    x, y = load_data(filenames)
 
     if backend.image_data_format() == 'channels_first':
         x = x.reshape(x.shape[0], 3, img_rows, img_cols)
@@ -221,7 +243,6 @@ def train(filename, img_rows, img_cols, extension):
     x_train /= 255
     x_test /= 255
 
-    print(y_train)
     print('x_train shape:', x_train.shape, "; y_train shape", y_train.shape)
     print(x_train.shape[0], 'train samples')
     print(x_test.shape[0], 'test samples')
@@ -231,10 +252,10 @@ def train(filename, img_rows, img_cols, extension):
     y_test = to_categorical(y_test, num_classes)
 
     model = Sequential()
-    model.add(Conv2D(128, kernel_size=(5, 5), activation='relu',
+    model.add(Conv2D(256, kernel_size=(5, 5), activation='relu',
                      data_format=backend.image_data_format(),
                      input_shape=input_shape))
-    model.add(Conv2D(64, (5, 5), activation='relu'))
+    model.add(Conv2D(128, (5, 5), activation='relu'))
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
     model.add(Flatten())
@@ -248,10 +269,11 @@ def train(filename, img_rows, img_cols, extension):
 
     model.fit(x_train, y_train,
               batch_size=batch_size,
+              shuffle=True,
               epochs=epochs,
               verbose=1,
               validation_data=(x_test, y_test),
-              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.0002, patience=5),
+              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.0002, patience=3),
                          EarlyStopping(monitor='loss', min_delta=0.0002, patience=5)])
 
     score = model.evaluate(x_test, y_test, verbose=1)
@@ -264,7 +286,7 @@ def predict(picture_names, heigth, width):
     """
     Return the predictions for the input_pictures.
     """
-    model = load_model('keras_model.h5')
+    model = load_model(FLAGS.saved_model_name)
 
     picture_array = np.zeros((5, heigth, width, 3), dtype=np.float32)
     with tf.Session() as sess:
@@ -286,9 +308,23 @@ def main(_):
     3. Tensorflow, Keras and Python online documentation
     """
     ###Parsed arguments checks###
-    data_extension = os.path.splitext(FLAGS.saved_data_name)[1]
-    if data_extension != ".h5" and data_extension != ".tfrecord":
-        print("The extensions of the file name(s) inserted could not be accepted.")
+    data_extension = os.path.splitext(FLAGS.save_data_name)[1]
+    if data_extension != ".tfrecord":
+        print("The extensions of the file name inserted could not be accepted.")
+        sys.exit()
+    if FLAGS.saved_data_name != None and FLAGS.use_saved_data == 1:
+        for filename in FLAGS.saved_data_name:
+            data_extension = os.path.splitext(filename)[1]
+            if data_extension != ".tfrecord":
+                print("The extensions of the file name(s) inserted could not be accepted.")
+                sys.exit()
+    data_extension = os.path.splitext(FLAGS.save_model_name)[1]
+    if data_extension != ".h5":
+        print("The extension of the model name inserted could not be accepted.")
+        sys.exit()
+    data_extension = os.path.splitext(FLAGS.saved_model_name)[1]
+    if data_extension != ".h5":
+        print("The extension of the model name inserted could not be accepted.")
         sys.exit()
     if FLAGS.use_saved_data != 0 and FLAGS.use_saved_data != 1:
         print("The 'use_saved_data' is a boolean. Only the '0' and '1' values can be accepted.")
@@ -300,14 +336,11 @@ def main(_):
     start_time = time.time()
     img_rows, img_cols = 300, 300
     ###Saving the data if requested###
-    if FLAGS.use_saved_data == 0:
+    if FLAGS.use_saved_data == 0 and FLAGS.mode == 'train':
         myclasses = ('before', 'during')
         mypath = "/data1/alves/galaxy_photos_balanced_gap/"
-        print("yes")
         save_data(mypath, myclasses, img_rows, img_cols, 3, 'jpg')
 
-    print("Total time:", time.time() - start_time)
-    sys.exit()
     ###Training or predicting###
     if FLAGS.mode == 'train':
         train(FLAGS.saved_data_name, img_rows, img_cols, 'jpg')
@@ -322,7 +355,7 @@ def main(_):
                       '/data1/alves/galaxy_photos_balanced_gap/during/d144_outFile-00480-09.jpg']
         result = predict(pict_names, img_rows, img_cols)
         for i in range(len(pict_names)):
-            print("Prediction (before):", result[i])
+            print("Prediction:", result[i])
     else:
         print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
         sys.exit()
@@ -342,16 +375,28 @@ if __name__ == '__main__':
         help='Mode. Currently available options: \n 1) train \n 2) predict'
     )
     parser.add_argument(
-        '--saved_model_name',
+        '--save_model_name',
         type=str,
         default='keras_model.h5',
         help="Name of the file where the model is going to be saved. It must have a 'h5' extension."
     )
     parser.add_argument(
-        '--saved_data_name',
+        '--saved_model_name',
+        type=str,
+        default='keras_model.h5',
+        help="Name of the file where the model was saved. It must have a 'h5' extension."
+    )
+    parser.add_argument(
+        '--save_data_name',
         type=str,
         default='galaxy_pictures.tfrecord',
-        help="Name of the file where the data is going to be saved. It must have a 'tfrecord' extension."
+        help="File name where the data is going to be saved. It must have a 'tfrecord' extension."
+    )
+    parser.add_argument(
+        '--saved_data_name', 
+        nargs='+', 
+        type=str,
+        help="File name(s) where the data was saved. They must have a 'tfrecord' extension."
     )
     parser.add_argument(
         '--cutmin',
