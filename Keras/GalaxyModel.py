@@ -10,14 +10,14 @@ from tensorflow.python.keras import backend
 #from tensorflow.python.keras.losses import categorical_crossentropy
 from tensorflow.python.keras.losses import binary_crossentropy
 #from tensorflow.python.keras.optimizers import Adadelta
+from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
+from tensorflow.python.keras.callbacks import TensorBoard
 
 import os, sys, glob, argparse
 import numpy as np
 from PIL import Image
 import time
-
-os.environ["CUDA_VISIBLE_DEVICES"]="1,2,3"
 
 class LoopInfo:
     """Handles all loop-related informations
@@ -39,7 +39,8 @@ class LoopInfo:
         else:
             percentage = (float(it)/self.total_len)*100
             print("{0:.2f}% finished. Iteration time: {1:.3f}" .format(percentage, subtraction))
-        self.time_init = time.time()
+        self.time_init = time.time()    
+
 
 def picture_decoder(tf_session, picture_name, height, width):
     """
@@ -65,6 +66,17 @@ def picture_decoder(tf_session, picture_name, height, width):
 
     final_tensor =  tf.image.resize_bilinear( picture_4d, resize_shape_as_int )
     return tf_session.run( final_tensor, feed_dict={picture_name_tensor: picture_name} )
+
+def picture_decoder_numpy(picture_name, height, width):
+    """
+    Converting a picture to an array using numpy.
+    Equivalent to the 'picture_decoder' funcion, but much faster, and I don't know why!
+    """
+    image = Image.open(picture_name)
+    image = image.resize((height,width), Image.LANCZOS)
+    image = np.array(image, dtype=np.int32) #the number can be at most 256
+    return np.expand_dims(image, axis=0)
+    
 
 def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jpg'):
     """
@@ -98,13 +110,17 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
             print("ERROR: The specified", os.path.join(DataFolder,nameClass), "does not exist." )
             sys.exit()
 
+            
+    #from pympler.tracker import SummaryTracker
+    #from pympler import asizeof
+    #tracker = SummaryTracker()
+
     ###Tensorflow Picture Decoding###
     input_height, input_width, input_depth = Height, Width, Depth
     with tf.Session() as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
         
-        #Define a counter (the saving takes a while...)
         indiv_len = np.zeros(len(Classes), dtype=np.uint32)
         for iClass, nameClass in enumerate(Classes):
             indiv_len[iClass]=len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax])
@@ -115,13 +131,10 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
         with tf.python_io.TFRecordWriter(FLAGS.save_data_name) as Writer:
             for iClass, nameClass in enumerate(Classes):
                 for i,pict in enumerate( glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax] ):
-                    if iClass == 0:
-                        index = i 
-                    else:
-                        index = i + iClass*indiv_len[iClass-1]
-                    if index%50 == 0:
+                    index = i + iClass*indiv_len[iClass-1] if iClass != 0 else i 
+                    tmp_picture = picture_decoder_numpy(pict, input_height, input_width) #ndarray with dtype=float32 
+                    if index%200 == 0:
                         loop.loop_print(index, time.time())
-                    tmp_picture = picture_decoder(sess, pict, input_height, input_width) #ndarray with dtype=float32 
                     Example = tf.train.Example(features=tf.train.Features(feature={
                         'height': _int64_feature(input_height),
                         'width': _int64_feature(input_width),
@@ -129,7 +142,6 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                         'picture_raw': _bytes_feature(tmp_picture.tostring()),
                         'label': _int64_feature(iClass)
                     }))
-    
                     Writer.write(Example.SerializeToString())
         print("Shape of a single saved picture:", tmp_picture.shape)
 
@@ -162,7 +174,8 @@ def load_data(filenames):
             width = int(Example.features.feature['width'].int64_list.value[0])
             depth = int(Example.features.feature['depth'].int64_list.value[0])
             img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
-            pict_array.append(np.fromstring(img_string,dtype=np.float32).reshape((height,width,depth)))
+            pict_array.append(np.fromstring(img_string,dtype=np.int32).reshape((height,width,depth)))
+            print(np.fromstring(img_string,dtype=np.int32).reshape((height,width,depth)).shape)
             label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
             if i%200 == 0:
                 loop.loop_print(i,time.time())
@@ -227,9 +240,12 @@ def train(filenames, img_rows, img_cols, extension):
     """
     Trains a model using Keras
     """
-    num_classes, epochs, batch_size = 2, 15, 16
+    num_classes, epochs, batch_size = 2, 15, 64
     x, y = load_data(filenames)
 
+    print("TRAIN: x[0] shape is", x.shape[0])
+    print("TRAIN: x shape is", x.shape)
+    print("TRAIN: y shape is", y.shape[0])
     if backend.image_data_format() == 'channels_first':
         x = x.reshape(x.shape[0], 3, img_rows, img_cols)
         input_shape = (3, img_rows, img_cols)
@@ -252,10 +268,10 @@ def train(filenames, img_rows, img_cols, extension):
     y_test = to_categorical(y_test, num_classes)
 
     model = Sequential()
-    model.add(Conv2D(256, kernel_size=(5, 5), activation='relu',
+    model.add(Conv2D(120, kernel_size=(5, 5), activation='relu',
                      data_format=backend.image_data_format(),
                      input_shape=input_shape))
-    model.add(Conv2D(128, (5, 5), activation='relu'))
+    model.add(Conv2D(64, (5, 5), activation='relu'))
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
     model.add(Flatten())
@@ -267,19 +283,22 @@ def train(filenames, img_rows, img_cols, extension):
                   optimizer='adam',
                   metrics=['accuracy'])
 
+    
     model.fit(x_train, y_train,
               batch_size=batch_size,
               shuffle=True,
               epochs=epochs,
               verbose=1,
               validation_data=(x_test, y_test),
-              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.0002, patience=3),
-                         EarlyStopping(monitor='loss', min_delta=0.0002, patience=5)])
+              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=3),
+                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=3),
+                         ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)])
 
     score = model.evaluate(x_test, y_test, verbose=1)
     print('Test loss:', score[0])
     print('Test accuracy:', score[1])
-    model.save('keras_model.h5')
+    model.save(FLAGS.save_model_name)
 
 
 def predict(picture_names, heigth, width):
@@ -312,7 +331,10 @@ def main(_):
     if data_extension != ".tfrecord":
         print("The extensions of the file name inserted could not be accepted.")
         sys.exit()
-    if FLAGS.saved_data_name != None and FLAGS.use_saved_data == 1:
+    if FLAGS.saved_data_name == None and FLAGS.mode == 'train':
+        print("Please provide the name of the file(s) where the pictures will be loaded from.")
+        sys.exit()
+    if FLAGS.saved_data_name != None:
         for filename in FLAGS.saved_data_name:
             data_extension = os.path.splitext(filename)[1]
             if data_extension != ".tfrecord":
@@ -340,7 +362,7 @@ def main(_):
         myclasses = ('before', 'during')
         mypath = "/data1/alves/galaxy_photos_balanced_gap/"
         save_data(mypath, myclasses, img_rows, img_cols, 3, 'jpg')
-
+    
     ###Training or predicting###
     if FLAGS.mode == 'train':
         train(FLAGS.saved_data_name, img_rows, img_cols, 'jpg')
@@ -408,6 +430,12 @@ if __name__ == '__main__':
         '--cutmax',
         type=int,
         default=999999,
+        help='Right range of the array of pictures to be saved for each class.'
+    )
+    parser.add_argument(
+        '--tensorboard',
+        type=str,
+        default='tensorboard',
         help='Right range of the array of pictures to be saved for each class.'
     )
     FLAGS, unparsed = parser.parse_known_args()
