@@ -41,35 +41,31 @@ class LoopInfo:
             print("{0:.2f}% finished. Iteration time: {1:.3f}" .format(percentage, subtraction))
         self.time_init = time.time()    
 
-
-def picture_decoder(tf_session, picture_name, height, width):
+def picture_decoder(dims):
     """
-    Part of a tensorflow graph that converts ('decodes') a picture into a tensor and performs
-    other extra image manipulations
-    
-    Arguments:
-    1. picture_name: path of the picture one whishes to decode
-    2. height, width and depth: dimensions of the final decoded picture
-    
+    Graph that decodes a jpeg image.
+
     Returns:
-    1. decoded picture (numpy ndarray)
+    1. The graph
+    2. The tensor which provides the decoded picture in its final form
+    3. The placeholder for the picture name
     """
-    picture_name_tensor = tf.placeholder( tf.string )
-    picture_contents = tf.read_file( picture_name_tensor )
-
-    picture =  tf.image.decode_jpeg( picture_contents )                   
-    picture_as_float = tf.image.convert_image_dtype( picture, tf.float32 )
-    picture_4d = tf.expand_dims( picture_as_float, 0 )
- 
-    resize_shape = tf.stack([height, width])
-    resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
-
-    final_tensor =  tf.image.resize_bilinear( picture_4d, resize_shape_as_int )
-    return tf_session.run( final_tensor, feed_dict={picture_name_tensor: picture_name} )
+    g = tf.Graph()
+    with g.as_default():
+        picture_name_tensor = tf.placeholder( tf.string )
+        picture_contents = tf.read_file( picture_name_tensor )
+        picture =  tf.image.decode_jpeg( picture_contents )
+        picture_as_float = tf.image.convert_image_dtype( picture, tf.float32 )
+        picture_4d = tf.expand_dims( picture_as_float, 0 )
+        resize_shape = tf.stack([dims[0], dims[1]])
+        resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
+        final_tensor =  tf.image.resize_bilinear( picture_4d, resize_shape_as_int )
+    return g, picture_name_tensor, final_tensor
 
 def picture_decoder_numpy(picture_name, height, width):
     """
-    Converting a picture to an array using numpy.
+    Not is use. Much slower than picture_decoder().
+    Converts a picture to an array using numpy.
     Equivalent to the 'picture_decoder' funcion, but much faster, and I don't know why!
     """
     image = Image.open(picture_name)
@@ -116,29 +112,32 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
     #tracker = SummaryTracker()
 
     ###Tensorflow Picture Decoding###
-    input_height, input_width, input_depth = Height, Width, Depth
-    with tf.Session() as sess:
+    dim_tuple = (Height, Width, Depth)
+    graph, nameholder, image_tensor = picture_decoder(dim_tuple)
+    with tf.Session(grpah=graph) as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
         
         indiv_len = np.zeros(len(Classes), dtype=np.uint32)
         for iClass, nameClass in enumerate(Classes):
-            indiv_len[iClass]=len(glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax])
+            glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))
+            indiv_len[iClass]=len(glob_list[FLAGS.cutmin:FLAGS.cutmax])
         total_len = sum(indiv_len)
 
         #Write to a .tfrecord file
         loop = LoopInfo(total_len)
         with tf.python_io.TFRecordWriter(FLAGS.save_data_name) as Writer:
             for iClass, nameClass in enumerate(Classes):
-                for i,pict in enumerate( glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax] ):
+                glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension)) 
+                for i,pict in enumerate(glob_list[FLAGS.cutmin:FLAGS.cutmax]):
                     index = i + iClass*indiv_len[iClass-1] if iClass != 0 else i 
-                    tmp_picture = picture_decoder_numpy(pict, input_height, input_width) #ndarray with dtype=float32 
-                    if index%200 == 0:
+                    tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
+                    if index%50 == 0:
                         loop.loop_print(index, time.time())
                     Example = tf.train.Example(features=tf.train.Features(feature={
-                        'height': _int64_feature(input_height),
-                        'width': _int64_feature(input_width),
-                        'depth': _int64_feature(input_depth),
+                        'height': _int64_feature(dim_tuple[0]),
+                        'width': _int64_feature(dim_tuple[1]),
+                        'depth': _int64_feature(dim_tuple[2]),
                         'picture_raw': _bytes_feature(tmp_picture.tostring()),
                         'label': _int64_feature(iClass)
                     }))
@@ -268,7 +267,7 @@ def train(filenames, img_rows, img_cols, extension):
     y_test = to_categorical(y_test, num_classes)
 
     model = Sequential()
-    model.add(Conv2D(120, kernel_size=(5, 5), activation='relu',
+    model.add(Conv2D(128, kernel_size=(5, 5), activation='relu',
                      data_format=backend.image_data_format(),
                      input_shape=input_shape))
     model.add(Conv2D(64, (5, 5), activation='relu'))
@@ -358,9 +357,9 @@ def main(_):
     start_time = time.time()
     img_rows, img_cols = 300, 300
     ###Saving the data if requested###
-    if FLAGS.use_saved_data == 0 and FLAGS.mode == 'train':
+    if FLAGS.use_saved_data == 0 and (FLAGS.mode == 'train' or FLAGS.mode == 'save'):
         myclasses = ('before', 'during')
-        mypath = "/data1/alves/galaxy_photos_balanced_gap/"
+        mypath = "/data1/alves/galaxy_photos_balanced_bckg/"
         save_data(mypath, myclasses, img_rows, img_cols, 3, 'jpg')
     
     ###Training or predicting###
@@ -378,8 +377,9 @@ def main(_):
         result = predict(pict_names, img_rows, img_cols)
         for i in range(len(pict_names)):
             print("Prediction:", result[i])
-    else:
-        print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
+    else: #if the mode is 'save' there is nothing else to do
+        if FLAGS.mode != 'save':
+            print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
         sys.exit()
 
 if __name__ == '__main__':
@@ -394,7 +394,7 @@ if __name__ == '__main__':
         '--mode',
         type=str,
         default='train',
-        help='Mode. Currently available options: \n 1) train \n 2) predict'
+        help='Mode. Currently available options: \n 1) save \n 2) train \n 3) predict'
     )
     parser.add_argument(
         '--save_model_name',
