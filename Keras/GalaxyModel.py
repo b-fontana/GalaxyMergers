@@ -19,6 +19,8 @@ import numpy as np
 from PIL import Image
 import time
 
+os.environ['CUDA_VISIBLE_DEVICES']="1,2,3"
+
 class LoopInfo:
     """Handles all loop-related informations
     
@@ -52,19 +54,18 @@ def picture_decoder(dims):
     """
     g = tf.Graph()
     with g.as_default():
-        picture_name_tensor = tf.placeholder( tf.string )
-        picture_contents = tf.read_file( picture_name_tensor )
-        picture =  tf.image.decode_jpeg( picture_contents )
-        picture_as_float = tf.image.convert_image_dtype( picture, tf.float32 )
-        picture_4d = tf.expand_dims( picture_as_float, 0 )
+        picture_name_tensor = tf.placeholder(tf.string)
+        picture_contents = tf.read_file(picture_name_tensor)
+        picture = tf.image.decode_jpeg(picture_contents, dct_method="INTEGER_ACCURATE")
+        picture_as_float = tf.image.convert_image_dtype(picture, tf.float32)
+        picture_4d = tf.expand_dims(picture_as_float, 0)
         resize_shape = tf.stack([dims[0], dims[1]])
         resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
-        final_tensor =  tf.image.resize_bilinear( picture_4d, resize_shape_as_int )
+        final_tensor =  tf.image.resize_bilinear(picture_4d, resize_shape_as_int)
     return g, picture_name_tensor, final_tensor
 
 def picture_decoder_numpy(picture_name, height, width):
     """
-    Not is use. Much slower than picture_decoder().
     Converts a picture to an array using numpy.
     Equivalent to the 'picture_decoder' funcion, but much faster, and I don't know why!
     """
@@ -98,7 +99,7 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
     if Extension not in allowed_extensions:
         print("ERROR: The", Extension, "extension is not supported.")
         sys.exit()
-    if not os.path.exists(DataFolder):
+    if not os.path.isdir(DataFolder):
         print("ERROR: The specified", DataFolder, "folder does not exist.")
         sys.exit()
     for nameClass in Classes:
@@ -106,15 +107,10 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
             print("ERROR: The specified", os.path.join(DataFolder,nameClass), "does not exist." )
             sys.exit()
 
-            
-    #from pympler.tracker import SummaryTracker
-    #from pympler import asizeof
-    #tracker = SummaryTracker()
-
     ###Tensorflow Picture Decoding###
     dim_tuple = (Height, Width, Depth)
-    graph, nameholder, image_tensor = picture_decoder(dim_tuple)
-    with tf.Session(grpah=graph) as sess:
+    #graph, nameholder, image_tensor = picture_decoder(dim_tuple)
+    with tf.Session() as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
         
@@ -131,8 +127,9 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                 glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension)) 
                 for i,pict in enumerate(glob_list[FLAGS.cutmin:FLAGS.cutmax]):
                     index = i + iClass*indiv_len[iClass-1] if iClass != 0 else i 
-                    tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
-                    if index%50 == 0:
+                    #tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
+                    tmp_picture = picture_decoder_numpy(pict, dim_tuple[0], dim_tuple[1])
+                    if index%100 == 0:
                         loop.loop_print(index, time.time())
                     Example = tf.train.Example(features=tf.train.Features(feature={
                         'height': _int64_feature(dim_tuple[0]),
@@ -142,12 +139,12 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                         'label': _int64_feature(iClass)
                     }))
                     Writer.write(Example.SerializeToString())
-        print("Shape of a single saved picture:", tmp_picture.shape)
-
+        print("The data was saved.")
 
 def load_data(filenames):
     """
-    Loads one or more TFRecords binary file(s) containing pictures information and converts it/them back to numpy array format. The function does not know before-hand how many pictures are stored in 'filenames'.
+    Loads one or more TFRecords binary file(s) containing pictures information and converts it/them back to numpy array format. 
+    The function does not know before-hand how many pictures are stored in 'filenames'.
     
     Arguments:
     1. The names of the files to load.
@@ -174,9 +171,8 @@ def load_data(filenames):
             depth = int(Example.features.feature['depth'].int64_list.value[0])
             img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
             pict_array.append(np.fromstring(img_string,dtype=np.int32).reshape((height,width,depth)))
-            print(np.fromstring(img_string,dtype=np.int32).reshape((height,width,depth)).shape)
             label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
-            if i%200 == 0:
+            if i%500 == 0:
                 loop.loop_print(i,time.time())
     pict_array = np.array(pict_array)
     label_array = np.array(label_array)
@@ -239,7 +235,7 @@ def train(filenames, img_rows, img_cols, extension):
     """
     Trains a model using Keras
     """
-    num_classes, epochs, batch_size = 2, 15, 64
+    num_classes, epochs, batch_size = 2, 20, 32
     x, y = load_data(filenames)
 
     print("TRAIN: x[0] shape is", x.shape[0])
@@ -289,8 +285,8 @@ def train(filenames, img_rows, img_cols, extension):
               epochs=epochs,
               verbose=1,
               validation_data=(x_test, y_test),
-              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=3),
-                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=3),
+              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=5),
+                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
                          ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
                          TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)])
 
@@ -300,17 +296,20 @@ def train(filenames, img_rows, img_cols, extension):
     model.save(FLAGS.save_model_name)
 
 
-def predict(picture_names, heigth, width):
+def predict(picture_names, height, width):
     """
     Return the predictions for the input_pictures.
     """
     model = load_model(FLAGS.saved_model_name)
 
-    picture_array = np.zeros((5, heigth, width, 3), dtype=np.float32)
-    with tf.Session() as sess:
-        for i,name in enumerate(picture_names):
-            picture_array[i] = picture_decoder(sess, name, heigth, width)
-
+    picture_array = np.zeros((height, width, 3), dtype=np.float32)
+    #dims = (height, width, 3)
+    #graph, nameholder, image_tensor = picture_decoder(dims)
+    #with tf.Session(graph=graph) as sess:
+    #for i,name in enumerate(picture_names):
+        #picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
+    picture_array = picture_decoder_numpy(picture_names, height, width)
+    
     return model.predict(picture_array, verbose=1)
 
 
@@ -359,7 +358,7 @@ def main(_):
     ###Saving the data if requested###
     if FLAGS.use_saved_data == 0 and (FLAGS.mode == 'train' or FLAGS.mode == 'save'):
         myclasses = ('before', 'during')
-        mypath = "/data1/alves/galaxy_photos_balanced_bckg/"
+        mypath = "/data1/alves/"+FLAGS.data_to_convert
         save_data(mypath, myclasses, img_rows, img_cols, 3, 'jpg')
     
     ###Training or predicting###
@@ -369,14 +368,15 @@ def main(_):
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
-        pict_names = ['/data1/alves/galaxy_photos_balanced_gap/before/c95_outFile-00300-12.jpg',
-                      '/data1/alves/galaxy_photos_balanced_gap/before/b49_outFile-00305-04.jpg',
-                      '/data1/alves/galaxy_photos_balanced_gap/before/c88_outFile-00330-06.jpg',
-                      '/data1/alves/galaxy_photos_balanced_gap/during/b72_outFile-00450-06.jpg',
-                      '/data1/alves/galaxy_photos_balanced_gap/during/d144_outFile-00480-09.jpg']
-        result = predict(pict_names, img_rows, img_cols)
+        pict_names = ['/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/b72_outFile-00360-00_blur+contour.jpg',
+                      '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/a9_outFile-00300-04_blur+contour.jpg',
+                      '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/b52_outFile-00330-11_blur+contour.jpg',
+                      '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/during/b71_outFile-00450-09_blur+contour.jpg',
+                      '/home/alves/mug.jpg']
+                      #'/data1/alves/blur+contours/galaxy_photos_balanced_bckg/during/a7_outFile-00500-06_blur+contour.jpg']
         for i in range(len(pict_names)):
-            print("Prediction:", result[i])
+            result = predict(pict_names[i], img_rows, img_cols)
+            print("Prediction:", result)
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
@@ -401,6 +401,12 @@ if __name__ == '__main__':
         type=str,
         default='keras_model.h5',
         help="Name of the file where the model is going to be saved. It must have a 'h5' extension."
+    )
+    parser.add_argument(
+        '--data_to_convert',
+        type=str,
+        default='galaxy_photos_balanced_bckg/',
+        help="Name of the folder where the pictures to be converted to the '.tfrecord' format are stored. It is assumed that that folder can be found in /data1/alves/. Note that the classes have to be stored in different folders inside the specified 'data_to_convert' folder. By default, the two classes being conisdered are 'before' and 'during'."
     )
     parser.add_argument(
         '--saved_model_name',
