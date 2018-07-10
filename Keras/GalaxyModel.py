@@ -19,7 +19,7 @@ import numpy as np
 from PIL import Image
 import time
 
-os.environ['CUDA_VISIBLE_DEVICES']="1,2,3"
+#os.environ['CUDA_VISIBLE_DEVICES']="1,2,3"
 
 class LoopInfo:
     """Handles all loop-related informations
@@ -61,7 +61,8 @@ def picture_decoder(dims):
         picture_4d = tf.expand_dims(picture_as_float, 0)
         resize_shape = tf.stack([dims[0], dims[1]])
         resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
-        final_tensor =  tf.image.resize_bilinear(picture_4d, resize_shape_as_int)
+        final_tensor =  tf.image.resize_bilinear(picture_4d, resize_shape_as_int, 
+                                                 align_corners=True)*255
     return g, picture_name_tensor, final_tensor
 
 def picture_decoder_numpy(picture_name, height, width):
@@ -109,8 +110,8 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
 
     ###Tensorflow Picture Decoding###
     dim_tuple = (Height, Width, Depth)
-    #graph, nameholder, image_tensor = picture_decoder(dim_tuple)
-    with tf.Session() as sess:
+    graph, nameholder, image_tensor = picture_decoder(dim_tuple)
+    with tf.Session(graph=graph) as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
         
@@ -127,8 +128,8 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                 glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension)) 
                 for i,pict in enumerate(glob_list[FLAGS.cutmin:FLAGS.cutmax]):
                     index = i + iClass*indiv_len[iClass-1] if iClass != 0 else i 
-                    #tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
-                    tmp_picture = picture_decoder_numpy(pict, dim_tuple[0], dim_tuple[1])
+                    tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
+                    #tmp_picture = picture_decoder_numpy(pict, dim_tuple[0], dim_tuple[1])
                     if index%100 == 0:
                         loop.loop_print(index, time.time())
                     Example = tf.train.Example(features=tf.train.Features(feature={
@@ -170,7 +171,7 @@ def load_data(filenames):
             width = int(Example.features.feature['width'].int64_list.value[0])
             depth = int(Example.features.feature['depth'].int64_list.value[0])
             img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
-            pict_array.append(np.fromstring(img_string,dtype=np.int32).reshape((height,width,depth)))
+            pict_array.append(np.fromstring(img_string,dtype=np.float32).reshape((height,width,depth)))
             label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
             if i%500 == 0:
                 loop.loop_print(i,time.time())
@@ -230,10 +231,10 @@ def split_data(x, y, fraction=0.8):
     return x[:splitting_value], y[:splitting_value], x[splitting_value:], y[splitting_value:]
 
 
-
 def train(filenames, img_rows, img_cols, extension):
     """
-    Trains a model using Keras
+    Trains a model using Keras.
+    Expects numpy arrays with values between 0 and 255.
     """
     num_classes, epochs, batch_size = 2, 20, 32
     x, y = load_data(filenames)
@@ -241,6 +242,7 @@ def train(filenames, img_rows, img_cols, extension):
     print("TRAIN: x[0] shape is", x.shape[0])
     print("TRAIN: x shape is", x.shape)
     print("TRAIN: y shape is", y.shape[0])
+    
     if backend.image_data_format() == 'channels_first':
         x = x.reshape(x.shape[0], 3, img_rows, img_cols)
         input_shape = (3, img_rows, img_cols)
@@ -249,28 +251,35 @@ def train(filenames, img_rows, img_cols, extension):
         input_shape = (img_rows, img_cols, 3)
         
     x_train, y_train, x_test, y_test = split_data(x, y, fraction=0.8)
-    x_train = x_train.astype('float32')
-    x_test = x_test.astype('float32')
+    #x_train = x_train.astype('float32')
+    #x_test = x_test.astype('float32')
     x_train /= 255
     x_test /= 255
+    
+    #This is a check
+    print(x_train[5])
+    print("Max:", np.amax(x_train[5]))
+    print("Min:", np.amin(x_train[5]))
+    im = Image.fromarray((x_train[5]*255).astype('uint8'))
+    im.save("im_numpy.jpg")
+    
 
     print('x_train shape:', x_train.shape, "; y_train shape", y_train.shape)
     print(x_train.shape[0], 'train samples')
     print(x_test.shape[0], 'test samples')
-
     # convert class vectors to binary class matrices (one-hot encoding)
     y_train = to_categorical(y_train, num_classes)
     y_test = to_categorical(y_test, num_classes)
 
     model = Sequential()
-    model.add(Conv2D(128, kernel_size=(5, 5), activation='relu',
+    model.add(Conv2D(128, kernel_size=(3, 3), activation='relu',
                      data_format=backend.image_data_format(),
                      input_shape=input_shape))
-    model.add(Conv2D(64, (5, 5), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
     model.add(Flatten())
-    model.add(Dense(128, activation='sigmoid'))
+    model.add(Dense(128, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(num_classes, activation='softmax'))
 
