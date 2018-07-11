@@ -7,8 +7,8 @@ from tensorflow.python.keras.layers import Dense, Dropout, Flatten
 from tensorflow.python.keras.layers import Conv2D, MaxPooling2D
 from tensorflow.python.keras.utils import to_categorical
 from tensorflow.python.keras import backend
-#from tensorflow.python.keras.losses import categorical_crossentropy
-from tensorflow.python.keras.losses import binary_crossentropy
+from tensorflow.python.keras.losses import categorical_crossentropy
+#from tensorflow.python.keras.losses import binary_crossentropy
 #from tensorflow.python.keras.optimizers import Adadelta
 from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
@@ -43,6 +43,7 @@ class LoopInfo:
             print("{0:.2f}% finished. Iteration time: {1:.3f}" .format(percentage, subtraction))
         self.time_init = time.time()    
 
+
 def picture_decoder(dims):
     """
     Graph that decodes a jpeg image.
@@ -57,13 +58,14 @@ def picture_decoder(dims):
         picture_name_tensor = tf.placeholder(tf.string)
         picture_contents = tf.read_file(picture_name_tensor)
         picture = tf.image.decode_jpeg(picture_contents, dct_method="INTEGER_ACCURATE")
-        picture_as_float = tf.image.convert_image_dtype(picture, tf.float32)
+        picture_as_float = tf.image.convert_image_dtype(picture, tf.float32)*255
         picture_4d = tf.expand_dims(picture_as_float, 0)
         resize_shape = tf.stack([dims[0], dims[1]])
         resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
         final_tensor =  tf.image.resize_bilinear(picture_4d, resize_shape_as_int, 
-                                                 align_corners=True)*255
+                                                 align_corners=True)
     return g, picture_name_tensor, final_tensor
+
 
 def picture_decoder_numpy(picture_name, height, width):
     """
@@ -123,10 +125,12 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
 
         #Write to a .tfrecord file
         loop = LoopInfo(total_len)
+        counter=0
         with tf.python_io.TFRecordWriter(FLAGS.save_data_name) as Writer:
             for iClass, nameClass in enumerate(Classes):
-                glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension)) 
-                for i,pict in enumerate(glob_list[FLAGS.cutmin:FLAGS.cutmax]):
+                glob_list = glob.glob(os.path.join(DataFolder,nameClass,"*."+Extension))[FLAGS.cutmin:FLAGS.cutmax]
+                print(len(glob_list))
+                for i,pict in enumerate(glob_list):
                     index = i + iClass*indiv_len[iClass-1] if iClass != 0 else i 
                     tmp_picture = sess.run(image_tensor, feed_dict={nameholder: pict} )
                     #tmp_picture = picture_decoder_numpy(pict, dim_tuple[0], dim_tuple[1])
@@ -140,8 +144,9 @@ def save_data(DataFolder, Classes, Height=300, Width=300, Depth=3, Extension='jp
                         'label': _int64_feature(iClass)
                     }))
                     Writer.write(Example.SerializeToString())
-        print("The data was saved.")
-
+                    counter += 1
+        print("The data was saved.", counter)
+        sys.exit()
 def load_data(filenames):
     """
     Loads one or more TFRecords binary file(s) containing pictures information and converts it/them back to numpy array format. 
@@ -257,7 +262,7 @@ def train(filenames, img_rows, img_cols, extension):
     x_test /= 255
     
     #This is a check
-    print(x_train[5])
+    pic = x_train[5]
     print("Max:", np.amax(x_train[5]))
     print("Min:", np.amin(x_train[5]))
     im = Image.fromarray((x_train[5]*255).astype('uint8'))
@@ -270,7 +275,8 @@ def train(filenames, img_rows, img_cols, extension):
     # convert class vectors to binary class matrices (one-hot encoding)
     y_train = to_categorical(y_train, num_classes)
     y_test = to_categorical(y_test, num_classes)
-
+    print(y_test.shape)
+    print(y_train.shape)
     model = Sequential()
     model.add(Conv2D(128, kernel_size=(3, 3), activation='relu',
                      data_format=backend.image_data_format(),
@@ -283,7 +289,8 @@ def train(filenames, img_rows, img_cols, extension):
     model.add(Dropout(0.5))
     model.add(Dense(num_classes, activation='softmax'))
 
-    model.compile(loss=binary_crossentropy,
+    model.compile(loss=categorical_crossentropy,
+    #model.compile(loss='mean_squared_error',
                   optimizer='adam',
                   metrics=['accuracy'])
 
@@ -295,9 +302,10 @@ def train(filenames, img_rows, img_cols, extension):
               verbose=1,
               validation_data=(x_test, y_test),
               callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=5),
-                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
-                         ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)])
+                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=5)
+                         #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+                         #TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)
+                     ])
 
     score = model.evaluate(x_test, y_test, verbose=1)
     print('Test loss:', score[0])
@@ -310,16 +318,19 @@ def predict(picture_names, height, width):
     Return the predictions for the input_pictures.
     """
     model = load_model(FLAGS.saved_model_name)
-
-    picture_array = np.zeros((height, width, 3), dtype=np.float32)
-    #dims = (height, width, 3)
-    #graph, nameholder, image_tensor = picture_decoder(dims)
-    #with tf.Session(graph=graph) as sess:
-    #for i,name in enumerate(picture_names):
-        #picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
-    picture_array = picture_decoder_numpy(picture_names, height, width)
-    
-    return model.predict(picture_array, verbose=1)
+    print("Model being used:", FLAGS.saved_model_name)
+    picture_array = np.zeros((len(picture_names), height, width, 3), dtype=np.float32)
+    dims = (height, width, 3)
+    graph, nameholder, image_tensor = picture_decoder((300, 300, 3))
+    print(image_tensor.shape)
+    with tf.Session(graph=graph) as sess:
+        init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
+        sess.run(init)
+        for i,name in enumerate(picture_names):
+            print(i)
+            picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
+            
+    print(model.predict(picture_array, verbose=1))
 
 
     
@@ -334,33 +345,54 @@ def main(_):
     3. Tensorflow, Keras and Python online documentation
     """
     ###Parsed arguments checks###
-    data_extension = os.path.splitext(FLAGS.save_data_name)[1]
-    if data_extension != ".tfrecord":
-        print("The extensions of the file name inserted could not be accepted.")
-        sys.exit()
-    if FLAGS.saved_data_name == None and FLAGS.mode == 'train':
-        print("Please provide the name of the file(s) where the pictures will be loaded from.")
-        sys.exit()
-    if FLAGS.saved_data_name != None:
-        for filename in FLAGS.saved_data_name:
-            data_extension = os.path.splitext(filename)[1]
-            if data_extension != ".tfrecord":
-                print("The extensions of the file name(s) inserted could not be accepted.")
-                sys.exit()
-    data_extension = os.path.splitext(FLAGS.save_model_name)[1]
-    if data_extension != ".h5":
-        print("The extension of the model name inserted could not be accepted.")
-        sys.exit()
-    data_extension = os.path.splitext(FLAGS.saved_model_name)[1]
-    if data_extension != ".h5":
-        print("The extension of the model name inserted could not be accepted.")
-        sys.exit()
-    if FLAGS.use_saved_data != 0 and FLAGS.use_saved_data != 1:
-        print("The 'use_saved_data' is a boolean. Only the '0' and '1' values can be accepted.")
-        sys.exit()
-    if FLAGS.cutmin >= FLAGS.cutmax:
-        print("The 'cutmin' option has to be smaller than the 'cutmax' option.")
-        sys.exit()
+    if FLAGS.mode == "save" or (FLAGS.mode == "train" and FLAGS.use_saved_data == 0):
+        data_extension = os.path.splitext(FLAGS.save_data_name)[1]
+        if data_extension != ".tfrecord":
+            print("The extensions of the file name inserted could not be accepted.")
+            sys.exit()
+        if FLAGS.use_saved_data != 0 and FLAGS.use_saved_data != 1:
+            print("The 'use_saved_data' is a boolean. Only the '0' and '1' values can be accepted.")
+            sys.exit()
+        if FLAGS.cutmin >= FLAGS.cutmax:
+            print("The 'cutmin' option has to be smaller than the 'cutmax' option.")
+            sys.exit()
+
+    elif FLAGS.mode == "train":
+        if FLAGS.saved_data_name == None:
+            print("Please provide the name of the file(s) where the pictures will be loaded from.")
+            sys.exit()
+        if FLAGS.saved_data_name != None:
+            for filename in FLAGS.saved_data_name:
+                data_extension = os.path.splitext(filename)[1]
+                if data_extension != ".tfrecord":
+                    print("The extensions of the file name(s) inserted could not be accepted.")
+                    sys.exit()
+        data_extension = os.path.splitext(FLAGS.save_model_name)[1]
+        if data_extension != ".h5":
+            print("The extension of the model name inserted could not be accepted.")
+            sys.exit()
+
+    elif FLAGS.mode == "predict":
+        data_extension = os.path.splitext(FLAGS.saved_model_name)[1]
+        if data_extension != ".h5" and FLAGS.mode != "save":
+            print("The extension of the model name inserted could not be accepted.")
+            sys.exit()
+
+
+    ###Print all passed arguments as a check###
+    print()
+    print("############Arguments##Info######################")
+    print("Mode:", FLAGS.mode)
+    print("Data to convert:", FLAGS.data_to_convert)
+    print("Saved data name:", FLAGS.saved_data_name)
+    print("Save data name:", FLAGS.save_data_name)
+    print("Saved model name:", FLAGS.saved_model_name)
+    print("Save model name:", FLAGS.save_model_name)
+    print("Tensorboard:", FLAGS.tensorboard)
+    print("Cutmin:", FLAGS.cutmin)
+    print("Cutmax:", FLAGS.cutmax)
+    print("#################################################")
+    print()
 
     start_time = time.time()
     img_rows, img_cols = 300, 300
@@ -377,15 +409,14 @@ def main(_):
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
-        pict_names = ['/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/b72_outFile-00360-00_blur+contour.jpg',
+        pict_names = ['mug.jpg',
                       '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/a9_outFile-00300-04_blur+contour.jpg',
                       '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/before/b52_outFile-00330-11_blur+contour.jpg',
                       '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/during/b71_outFile-00450-09_blur+contour.jpg',
-                      '/home/alves/mug.jpg']
-                      #'/data1/alves/blur+contours/galaxy_photos_balanced_bckg/during/a7_outFile-00500-06_blur+contour.jpg']
-        for i in range(len(pict_names)):
-            result = predict(pict_names[i], img_rows, img_cols)
-            print("Prediction:", result)
+                      '/data1/alves/blur+contours/galaxy_photos_balanced_bckg/during/a7_outFile-00500-06_blur+contour.jpg']
+        predict(pict_names, img_rows, img_cols)
+        #for i in range(len(pict_names)):
+         #   print("Prediction:", result[i])
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
@@ -396,7 +427,6 @@ if __name__ == '__main__':
     parser.add_argument(
         '--use_saved_data',
         type=int,
-        default=0,
         help='Imports (or not) the TFRecords file containing previously saved data. This saves a lot of computational time. Default: 0'
     )
     parser.add_argument(
@@ -408,25 +438,21 @@ if __name__ == '__main__':
     parser.add_argument(
         '--save_model_name',
         type=str,
-        default='keras_model.h5',
         help="Name of the file where the model is going to be saved. It must have a 'h5' extension."
     )
     parser.add_argument(
         '--data_to_convert',
         type=str,
-        default='galaxy_photos_balanced_bckg/',
         help="Name of the folder where the pictures to be converted to the '.tfrecord' format are stored. It is assumed that that folder can be found in /data1/alves/. Note that the classes have to be stored in different folders inside the specified 'data_to_convert' folder. By default, the two classes being conisdered are 'before' and 'during'."
     )
     parser.add_argument(
         '--saved_model_name',
         type=str,
-        default='keras_model.h5',
         help="Name of the file where the model was saved. It must have a 'h5' extension."
     )
     parser.add_argument(
         '--save_data_name',
         type=str,
-        default='galaxy_pictures.tfrecord',
         help="File name where the data is going to be saved. It must have a 'tfrecord' extension."
     )
     parser.add_argument(
@@ -450,7 +476,6 @@ if __name__ == '__main__':
     parser.add_argument(
         '--tensorboard',
         type=str,
-        default='tensorboard',
         help='Right range of the array of pictures to be saved for each class.'
     )
     FLAGS, unparsed = parser.parse_known_args()
