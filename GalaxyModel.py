@@ -8,8 +8,6 @@ from tensorflow.python.keras.layers import Conv2D, MaxPooling2D
 from tensorflow.python.keras.utils import to_categorical
 from tensorflow.python.keras import backend
 from tensorflow.python.keras.losses import categorical_crossentropy
-#from tensorflow.python.keras.losses import binary_crossentropy
-#from tensorflow.python.keras.optimizers import Adadelta
 from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
 from tensorflow.python.keras.callbacks import TensorBoard
@@ -19,15 +17,34 @@ import numpy as np
 from PIL import Image
 
 from Modules.Data import Data as BData
+from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
     
+def nn_sequential():
+    """
+    Creates and returns neural net sequential model
+    """
+    m = Sequential()
+    m.add(Conv2D(128, kernel_size=(3, 3), activation='relu',
+                     data_format=backend.image_data_format(),
+                     input_shape=input_shape))
+    m.add(Conv2D(64, (3, 3), activation='relu'))
+    m.add(MaxPooling2D(pool_size=(2, 2)))
+    m.add(Dropout(0.25))
+    m.add(Flatten())
+    m.add(Dense(128, activation='relu'))
+    m.add(Dropout(0.5))
+    m.add(Dense(num_classes, activation='softmax'))
+    return m
+
 def train(filenames, img_rows, img_cols, extension):
     """
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    num_classes, epochs, batch_size = 2, 20, 32
-    x, y = GalaxyData.load_from_tfrecord(filenames)
+    BDat = BData()
+    num_classes, epochs, batch_size = 2, 1, 32
+    x, y = BDat.load_from_tfrecord(filenames)
 
     print("TRAIN: x[0] shape is", x.shape[0])
     print("TRAIN: x shape is", x.shape)
@@ -40,46 +57,29 @@ def train(filenames, img_rows, img_cols, extension):
         x = x.reshape(x.shape[0], img_rows, img_cols, 3)
         input_shape = (img_rows, img_cols, 3)
         
-    x_train, y_train, x_test, y_test = GalaxyData.split_data(x, y, fraction=0.8)
-    #x_train = x_train.astype('float32')
+    x_train, y_train, x_test, y_test = BDat.split_data(x, y, fraction=0.8)
+    print(type(x_train))
+    x_train = x_train.astype('float32')
+    print(type(x_train))
+    sys.exit()
     #x_test = x_test.astype('float32')
     x_train /= 255.
-    x_test /= 255.
-    print(x_train[5].shape)
-    #This is a check
-    pic = x_train[5]
-    print("Max:", np.amax(x_train[5]))
-    print("Min:", np.amin(x_train[5]))
-    im = Image.fromarray((x_train[5]*255).astype('uint8'))
-    im.save("im_numpy.jpg")
-    
+    x_test /= 255.    
 
     print('x_train shape:', x_train.shape, "; y_train shape", y_train.shape)
     print(x_train.shape[0], 'train samples')
     print(x_test.shape[0], 'test samples')
+
     # convert class vectors to binary class matrices (one-hot encoding)
     y_train = to_categorical(y_train, num_classes)
     y_test = to_categorical(y_test, num_classes)
     print(y_test.shape)
     print(y_train.shape)
-    model = Sequential()
-    model.add(Conv2D(128, kernel_size=(3, 3), activation='relu',
-                     data_format=backend.image_data_format(),
-                     input_shape=input_shape))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-    model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(num_classes, activation='softmax'))
 
+    model = nn_sequential()
     model.compile(loss=categorical_crossentropy,
-    #model.compile(loss='mean_squared_error',
                   optimizer='adam',
-                  metrics=['accuracy'])
-
-    
+                  metrics=['accuracy'])    
     model.fit(x_train, y_train,
               batch_size=batch_size,
               shuffle=True,
@@ -91,10 +91,8 @@ def train(filenames, img_rows, img_cols, extension):
                          #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
                          #TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)
                      ])
-
     score = model.evaluate(x_test, y_test, verbose=1)
-    print('Test loss:', score[0])
-    print('Test accuracy:', score[1])
+    print('Test loss: %f; Test accuracy: %f.' % (score[0], score[1]))
     model.save(FLAGS.save_model_name)
 
 
@@ -105,16 +103,22 @@ def predict(picture_names, height, width):
     model = load_model(FLAGS.saved_model_name)
     print("Model being used:", FLAGS.saved_model_name)
     picture_array = np.zeros((len(picture_names), height, width, 3), dtype=np.float32)
-    dims = (height, width, 3)
-    graph, nameholder, image_tensor = picture_decoder((300, 300, 3))
-    print(image_tensor.shape)
+    graph, nameholder, image_tensor = BPic().tf_decoder(height, width)
+
     with tf.Session(graph=graph) as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
         for i,name in enumerate(picture_names):
-            picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})/255.
-    return model.predict(picture_array/255., verbose=0)
+            picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
+            picture_array[i] = np.array(picture_array[i], dtype=np.float32)
+#            picture_array[i] = picture_array[i].astype('float32') 
+            picture_array[i] /= 255
+            
+        print(picture_array[0])
+    print(np.amax(picture_array[0]))
+    print(np.amin(picture_array[0]))
 
+    print(model.predict(picture_array, verbose=0))
 
     
 def main(_):
@@ -196,19 +200,46 @@ def main(_):
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
-        pict_names = ['twoballs.jpg',
-                      '/data1/alves/galaxy_photos_balanced_bckg/before/a9_outFile-00300-04.jpg',
-                      '/data1/alves/galaxy_photos_balanced_bckg/before/b52_outFile-00330-11.jpg',
-                      '/data1/alves/galaxy_photos_balanced_bckg/during/b71_outFile-00450-09.jpg',
-                      '/data1/alves/galaxy_photos_balanced_bckg/during/a7_outFile-00500-06.jpg']
-        result = predict(pict_names, img_rows, img_cols)
-        for i in range(len(pict_names)):
-            print("Prediction:", result[i])
+        predict(prediction_list(), img_rows, img_cols)
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
         sys.exit()
 
+def prediction_list():
+    return ['/data1/alves/GalaxyZoo/noninteracting/training_587738947752099924.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/test_587724650336485508.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/test_587722982297633240.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_587729160042119287.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_588013384353382565.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/validation_588297864188133564.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_587729160044675203.jpeg',  
+            '/data1/alves/GalaxyZoo/noninteracting/training_588013384356986950.jpeg',  
+            '/data1/alves/GalaxyZoo/noninteracting/validation_588297864189247559.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_587729160048279578.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_588013384357314676.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/validation_588297864724021378.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_587729160048345212.jpeg',  
+            '/data1/alves/GalaxyZoo/noninteracting/training_588015507653853241.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/validation_588297865250472179.jpeg',
+            '/data1/alves/GalaxyZoo/noninteracting/training_587729160049066132.jpeg',
+
+            '/data1/alves/GalaxyZoo/merger/training_588015507655819397.jpeg',
+            '/data1/alves/GalaxyZoo/merger/validation_588023239133495463.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_587728932419862622.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_588015507660996743.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/validation_588023239133495464.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_587728932956012731.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/training_588015507660996744.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/validation_588023239671873686.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_587728932956012732.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/training_588015507664928990.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/validation_588023239671873687.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_587728949052506235.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/training_588015507664928991.jpeg',  
+            '/data1/alves/GalaxyZoo/merger/validation_588295842319630367.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_587728949052506236.jpeg',
+            '/data1/alves/GalaxyZoo/merger/training_588015507680723008.jpeg']
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
