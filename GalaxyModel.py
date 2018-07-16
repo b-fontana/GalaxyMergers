@@ -30,34 +30,33 @@ def nn_sequential(inputs, shape, nclass):
                           padding='valid',
                           data_format=backend.image_data_format(),
                           input_shape=shape)(inputs)
-    x = layers.Conv2D(64, kernel_size=(3, 3), activation='relu',
+    x = layers.Conv2D(32, kernel_size=(3, 3), activation='relu',
                       padding='valid')(x)
     x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
-    x = layers.Conv2D(128, kernel_size=(3, 3), activation='relu',
-                      padding='valid')(x)
-    x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
+    #x = layers.Conv2D(128, kernel_size=(3, 3), activation='relu',
+                      #padding='valid')(x)
+    #x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
     x = layers.Dropout(0.5)(x)
     x = layers.Flatten()(x)
-    x = layers.Dense(256, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
+    #x = layers.Dense(256, activation='relu')(x)
+    #x = layers.Dropout(0.5)(x)
     x = layers.Dense(128, activation='relu')(x)
     x = layers.Dropout(0.5)(x)
     x = layers.Dense(nclass, activation='softmax')(x)
     return x
 
-def train(filenames, img_rows, img_cols, depth, extension):
+def train(filenames, dims, extension):
     """
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    nclasses, nepochs, batch_size = 2, 10, 96
+    nclasses, nepochs, batch_size = 2, 10, 64
     npics = 0
     for filename in filenames:
         for record in tf.python_io.tf_record_iterator(filename):
             npics += 1
-    
-    dims_tuple = (img_rows, img_cols, depth)
-    dataset = BData().load_from_tfrecord(filenames, nclasses, dims_tuple)
+
+    dataset = BData().load_from_tfrecord(filenames, nclasses, dims)
     dataset = dataset.shuffle(buffer_size=npics)
     dataset = dataset.repeat(nepochs)
     dataset = dataset.batch(batch_size)
@@ -68,9 +67,9 @@ def train(filenames, img_rows, img_cols, depth, extension):
     if backend.image_data_format() == 'channels_first':
         input_shape = (depth, img_rows, img_cols)
     else:
-        input_shape = (img_rows, img_cols, depth)
+        input_shape = (dims[0], dims[1], dims[2])
 
-        model_input = layers.Input(tensor=x, shape=(img_rows, img_cols, depth))
+        model_input = layers.Input(tensor=x, shape=(dims[0], dims[1], dims[2]))
         model_output = nn_sequential(model_input, input_shape, nclasses)
         model = Model(inputs=model_input, outputs=model_output)
         model.compile(optimizer='adam',
@@ -78,26 +77,28 @@ def train(filenames, img_rows, img_cols, depth, extension):
                       metrics=['accuracy'],
                       target_tensors=[y])    
         model.summary()
+        print("STEPS_PER_EPOCH:", int((npics+batch_size-1)/batch_size))
+        print("NPICS:", npics)
+        print("BATCH_SIZE:", batch_size)
         model.fit(shuffle=True,
                   epochs=nepochs,
-                  steps_per_epoch=int(npics+batch_size-1/batch_size),
+                  steps_per_epoch=int((npics+batch_size-1)/batch_size),
                   verbose=1,
-                  callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=5),
-                             EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
-                             ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+                  callbacks=[EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
+                             #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
                              TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
 
         model.save(FLAGS.save_model_name)
 
 
-def predict(picture_names, height, width):
+def predict(picture_names, dims):
     """
     Return the predictions for the input_pictures.
     """
     model = load_model(FLAGS.saved_model_name)
     print("Model being used:", FLAGS.saved_model_name)
-    picture_array = np.zeros((len(picture_names), height, width, 3), dtype=np.float32)
-    graph, nameholder, image_tensor = BPic().tf_decoder(height, width)
+    picture_array = np.zeros((len(picture_names), dims[0], dims[1], dims[2]), dtype=np.float32)
+    graph, nameholder, image_tensor = BPic().tf_decoder(dims)
 
     with tf.Session(graph=graph) as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
@@ -181,24 +182,24 @@ def main(_):
 
     GalaxyData = BData("galaxies")
 
-    img_rows, img_cols, img_depth = 300, 300, FLAGS.input_depth
+    dims_tuple = (300, 300, FLAGS.input_depth)
     ###Saving the data if requested###
     if FLAGS.use_saved_data == 0 and (FLAGS.mode == 'train' or FLAGS.mode == 'save'):
         myclasses = ('before', 'during')
         mypath = "/data1/alves/"+FLAGS.data_to_convert
         GalaxyData.save_to_tfrecord(mypath, myclasses, 
-                                    FLAGS.save_data_name, 
-                                    FLAGS.cutmin, FLAGS.cutmax, 
-                                    img_rows, img_cols, img_depth, 'jpg')
+                                    FLAGS.save_data_name,
+                                    dims_tuple,
+                                    FLAGS.cutmin, FLAGS.cutmax, 'jpg')
     
     ###Training or predicting###
     if FLAGS.mode == 'train':
-        train(FLAGS.saved_data_name, img_rows, img_cols, img_depth, 'jpg')
+        train(FLAGS.saved_data_name, dims_tuple, 'jpg')
     elif FLAGS.mode == 'predict':
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
-        predict(prediction_list(), img_rows, img_cols)
+        predict(prediction_list(), dims_tuple)
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
