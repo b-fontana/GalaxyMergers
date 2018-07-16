@@ -6,10 +6,11 @@ class Picture:
         self.name = name
 
     def tf_decoder(self, height, width):
-        """                                                                                                                                                                                                               Graph that decodes a jpeg image.
+        """
+        Graph that decodes a jpeg image.
         1. The graph
         2. The tensor which provides the decoded picture in its final form
-        3. The placeholder for the picture name                                                                                                                                                                           """
+        3. The placeholder for the picture name                                                                 """
         g = tf.Graph()
         with g.as_default():
             picture_name_tensor = tf.placeholder(tf.string)

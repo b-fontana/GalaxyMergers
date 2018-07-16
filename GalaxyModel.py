@@ -2,9 +2,8 @@ from __future__ import print_function
 
 import tensorflow as tf
 from tensorflow.python.keras.datasets import mnist
-from tensorflow.python.keras.models import Sequential, load_model
-from tensorflow.python.keras.layers import Dense, Dropout, Flatten
-from tensorflow.python.keras.layers import Conv2D, MaxPooling2D
+from tensorflow.python.keras.models import Model, load_model
+from tensorflow.python.keras import layers 
 from tensorflow.python.keras.utils import to_categorical
 from tensorflow.python.keras import backend
 from tensorflow.python.keras.losses import categorical_crossentropy
@@ -19,81 +18,76 @@ from PIL import Image
 from Modules.Data import Data as BData
 from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
-    
-def nn_sequential():
-    """
-    Creates and returns neural net sequential model
-    """
-    m = Sequential()
-    m.add(Conv2D(128, kernel_size=(3, 3), activation='relu',
-                     data_format=backend.image_data_format(),
-                     input_shape=input_shape))
-    m.add(Conv2D(64, (3, 3), activation='relu'))
-    m.add(MaxPooling2D(pool_size=(2, 2)))
-    m.add(Dropout(0.25))
-    m.add(Flatten())
-    m.add(Dense(128, activation='relu'))
-    m.add(Dropout(0.5))
-    m.add(Dense(num_classes, activation='softmax'))
-    return m
 
-def train(filenames, img_rows, img_cols, extension):
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+    
+def nn_sequential(inputs, shape, nclass):
+    """
+    Creates and returns neural net model
+    """
+    x = layers.Conv2D(32, kernel_size=(3, 3), 
+                          activation='relu',
+                          padding='valid',
+                          data_format=backend.image_data_format(),
+                          input_shape=shape)(inputs)
+    x = layers.Conv2D(64, kernel_size=(3, 3), activation='relu',
+                      padding='valid')(x)
+    x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
+    x = layers.Conv2D(128, kernel_size=(3, 3), activation='relu',
+                      padding='valid')(x)
+    x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
+    x = layers.Dropout(0.5)(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.5)(x)
+    x = layers.Dense(128, activation='relu')(x)
+    x = layers.Dropout(0.5)(x)
+    x = layers.Dense(nclass, activation='softmax')(x)
+    return x
+
+def train(filenames, img_rows, img_cols, depth, extension):
     """
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    BDat = BData()
-    num_classes, epochs, batch_size = 2, 1, 32
-    x, y = BDat.load_from_tfrecord(filenames)
-
-    print("TRAIN: x[0] shape is", x.shape[0])
-    print("TRAIN: x shape is", x.shape)
-    print("TRAIN: y shape is", y.shape[0])
+    nclasses, nepochs, batch_size = 2, 10, 96
+    npics = 0
+    for filename in filenames:
+        for record in tf.python_io.tf_record_iterator(filename):
+            npics += 1
+    
+    dims_tuple = (img_rows, img_cols, depth)
+    dataset = BData().load_from_tfrecord(filenames, nclasses, dims_tuple)
+    dataset = dataset.shuffle(buffer_size=npics)
+    dataset = dataset.repeat(nepochs)
+    dataset = dataset.batch(batch_size)
+    iterator = dataset.make_one_shot_iterator()
+    
+    x, y = iterator.get_next()
     
     if backend.image_data_format() == 'channels_first':
-        x = x.reshape(x.shape[0], 3, img_rows, img_cols)
-        input_shape = (3, img_rows, img_cols)
+        input_shape = (depth, img_rows, img_cols)
     else:
-        x = x.reshape(x.shape[0], img_rows, img_cols, 3)
-        input_shape = (img_rows, img_cols, 3)
-        
-    x_train, y_train, x_test, y_test = BDat.split_data(x, y, fraction=0.8)
-    print(type(x_train))
-    x_train = x_train.astype('float32')
-    print(type(x_train))
-    sys.exit()
-    #x_test = x_test.astype('float32')
-    x_train /= 255.
-    x_test /= 255.    
+        input_shape = (img_rows, img_cols, depth)
 
-    print('x_train shape:', x_train.shape, "; y_train shape", y_train.shape)
-    print(x_train.shape[0], 'train samples')
-    print(x_test.shape[0], 'test samples')
+        model_input = layers.Input(tensor=x, shape=(img_rows, img_cols, depth))
+        model_output = nn_sequential(model_input, input_shape, nclasses)
+        model = Model(inputs=model_input, outputs=model_output)
+        model.compile(optimizer='adam',
+                      loss=categorical_crossentropy,
+                      metrics=['accuracy'],
+                      target_tensors=[y])    
+        model.summary()
+        model.fit(shuffle=True,
+                  epochs=nepochs,
+                  steps_per_epoch=int(npics+batch_size-1/batch_size),
+                  verbose=1,
+                  callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=5),
+                             EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
+                             ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+                             TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
 
-    # convert class vectors to binary class matrices (one-hot encoding)
-    y_train = to_categorical(y_train, num_classes)
-    y_test = to_categorical(y_test, num_classes)
-    print(y_test.shape)
-    print(y_train.shape)
-
-    model = nn_sequential()
-    model.compile(loss=categorical_crossentropy,
-                  optimizer='adam',
-                  metrics=['accuracy'])    
-    model.fit(x_train, y_train,
-              batch_size=batch_size,
-              shuffle=True,
-              epochs=epochs,
-              verbose=1,
-              validation_data=(x_test, y_test),
-              callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=5),
-                         EarlyStopping(monitor='loss', min_delta=0.00001, patience=5)
-                         #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                         #TensorBoard(log_dir=FLAGS.tensorboard, batch_size=32)
-                     ])
-    score = model.evaluate(x_test, y_test, verbose=1)
-    print('Test loss: %f; Test accuracy: %f.' % (score[0], score[1]))
-    model.save(FLAGS.save_model_name)
+        model.save(FLAGS.save_model_name)
 
 
 def predict(picture_names, height, width):
@@ -145,6 +139,9 @@ def main(_):
             sys.exit()
 
     elif FLAGS.mode == "train":
+        if FLAGS.tensorboard == None:
+            print("Please specify the tensorboard folder.")
+            sys.exit()
         if FLAGS.saved_data_name == None:
             print("Please provide the name of the file(s) where the pictures will be loaded from.")
             sys.exit()
@@ -178,12 +175,13 @@ def main(_):
     print("Tensorboard:", FLAGS.tensorboard)
     print("Cutmin:", FLAGS.cutmin)
     print("Cutmax:", FLAGS.cutmax)
+    print("RGB:", FLAGS.input_depth)
     print("#################################################")
     print()
 
     GalaxyData = BData("galaxies")
 
-    img_rows, img_cols = 300, 300
+    img_rows, img_cols, img_depth = 300, 300, FLAGS.input_depth
     ###Saving the data if requested###
     if FLAGS.use_saved_data == 0 and (FLAGS.mode == 'train' or FLAGS.mode == 'save'):
         myclasses = ('before', 'during')
@@ -191,11 +189,11 @@ def main(_):
         GalaxyData.save_to_tfrecord(mypath, myclasses, 
                                     FLAGS.save_data_name, 
                                     FLAGS.cutmin, FLAGS.cutmax, 
-                                    img_rows, img_cols, 3, 'jpg')
+                                    img_rows, img_cols, img_depth, 'jpg')
     
     ###Training or predicting###
     if FLAGS.mode == 'train':
-        train(FLAGS.saved_data_name, img_rows, img_cols, 'jpg')
+        train(FLAGS.saved_data_name, img_rows, img_cols, img_depth, 'jpg')
     elif FLAGS.mode == 'predict':
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")

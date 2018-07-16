@@ -1,4 +1,4 @@
-import os, glob, time
+import os, glob, sys, time
 import tensorflow as tf
 import numpy as np
 
@@ -82,63 +82,40 @@ class Data:
         print("The data was saved.")
 
 
-    def load_from_tfrecord(self, filenames):
+    def load_from_tfrecord(self, filenames, class_number, dims):
         """
-        Loads one or more TFRecords binary file(s) containing pictures information and converts it/them back to numpy array format. The function does not know before-hand how many pictures are stored in 'filenames'.
-        Arguments:
-        1. The names of the files to load.                                                                   
-        Returns:
-        1. A 4d array with pictures and another array with labels. The first array follows the following format: (index, height_in_pixels, width_in_pixels, numer_of_channels)
-        2. The given classes are converted into numerical labels, starting from zero. For example, if three classes are present, 'a', 'b' and 'c', then the labels with respectively be 0, 1 and 2.
+        Converts TFRecord files into a TensorFlow Dataset. 
+  
+        Arguments: The names of the files to load
+        Returns: A mapped tf.data.Dataset (pictures, labels)
         """
         for filename in filenames:
             if not os.path.isfile(filename):
                 print("The data stored in", filename,
                       "could not be loaded. Please make sure the filename is correct.")
                 sys.exit()
-                
-        pict_array, label_array = ([] for i in range(2)) #such a fancy initialization!    
-        for filename in filenames:
-            iterator = tf.python_io.tf_record_iterator(path=filename)
-            loop = LoopInfo()
-            for i, element in enumerate(iterator):
-                Example = tf.train.Example()
-                Example.ParseFromString(element)
-                height = int(Example.features.feature['height'].int64_list.value[0])
-                width = int(Example.features.feature['width'].int64_list.value[0])
-                depth = int(Example.features.feature['depth'].int64_list.value[0])
-                img_string = (Example.features.feature['picture_raw'].bytes_list.value[0])
-                pict_array.append(np.fromstring(img_string,dtype=np.float32).reshape((height,width,depth)))
-                label_array.append( (Example.features.feature['label'].int64_list.value[0]) )
-                if i%500 == 0:
-                    loop.loop_print(i,time.time())
-                pict_array = np.array(pict_array)
-                label_array = np.array(label_array)
-        print("Shape of the loaded array of pictures:", pict_array.shape)
-        print("Shape of the loaded array of labels:", label_array.shape)
-        return (pict_array, label_array)
+
+        def parser_func(tfrecord):
+            features = {'picture_raw': tf.FixedLenFeature((), tf.string),
+                        'label': tf.FixedLenFeature((), tf.int64)}
+            parsed_features = tf.parse_single_example(tfrecord, features)
+
+            picture = tf.decode_raw(parsed_features['picture_raw'], tf.float32)
+            picture /= 255.
+            #picture_shape = tf.cast(parsed_features['height'], tf.int64),
+            #                 tf.cast(parsed_features['width'], tf.int64),
+            #                 tf.cast(parsed_features['depth'], tf.int64)
+            picture = tf.reshape(picture, [dims[0], dims[1], dims[2]])
+            label = parsed_features['label']
+            label = tf.one_hot(indices=label, depth=class_number, on_value=1, off_value=0)
+            label = tf.cast(label, tf.float32)
+            return picture, label
+
+        dataset = tf.data.TFRecordDataset(filenames)
+        return dataset.map(parser_func)
 
 
-    def split_data(self, x, y, fraction=0.8):
-        """
-        Splits the data into 'training' and 'testing' datasets according to the specified fraction.          
-        
-        Arguments:                                                                                           
-        1. The actual data values ('x')                                                                      
-        2. The label array ('y')                                                                             
-        3. The fraction of training data the user wants                                                      
-        
-        Returns:                                                                                             
-        The testing and training data and labels in the following order:                                     
-        (x_train, y_train, x_test, y_test)                                                                   
-        """
-        ###Sanity Check###                                                                                   
-        if len(x) != len(y):
-            print("ERROR: The arrays of the values and of the labels must have the same size!")
-            sys.exit()
-
-        ###Shuffling###                                                                                      
-        unison_shuffle(x, y)
-
-        splitting_value = int(len(x)*fraction)
-        return x[:splitting_value], y[:splitting_value], x[splitting_value:], y[splitting_value:]
+    def split_data(self, dataset, ntest):
+        test_dataset = dataset.take(ntest)
+        train_dataset = dataset.skip(ntest)
+        return train_dataset, test_dataset
