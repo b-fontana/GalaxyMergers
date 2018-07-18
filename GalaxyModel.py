@@ -50,7 +50,7 @@ def train(filenames, dims, extension):
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    nclasses, nepochs, batch_size = 2, 10, 64
+    nclasses, nepochs, batch_size = 2, 10, 192
     npics = 0
     for filename in filenames:
         for record in tf.python_io.tf_record_iterator(filename):
@@ -206,7 +206,7 @@ def main(_):
         sys.exit()
 
 def prediction_list():
-    return ['/data1/alves/GalaxyZoo/noninteracting/training_587738947752099924.jpeg',
+    """return ['/data1/alves/GalaxyZoo/noninteracting/training_587738947752099924.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/test_587724650336485508.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/test_587722982297633240.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/training_587729160042119287.jpeg',
@@ -239,6 +239,36 @@ def prediction_list():
             '/data1/alves/GalaxyZoo/merger/validation_588295842319630367.jpeg',
             '/data1/alves/GalaxyZoo/merger/training_587728949052506236.jpeg',
             '/data1/alves/GalaxyZoo/merger/training_588015507680723008.jpeg']
+    """
+    return ['/data1/alves/contours/GalaxyZoo/merger/validation_588023046401818861_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736753004478741_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023046401818862_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736753540235433_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023046939476090_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736753540235434_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023046939476091_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736781994262752_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023046944391390_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736781994262753_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023046944391391_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736781995573405_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/validation_588023048018395313_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/merger/training_587736781995573406_contour.jpeg',
+
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588297864188133564_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568170668109_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588297864189247559_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568174272622_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588297864724021378_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568176369826_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588297865250472179_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568702951549_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588298662504169504_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568705441963_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588298662505939047_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568710160617_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588848900467392548_contour.jpeg',
+            '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738574610497709_contour.jpeg']
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
