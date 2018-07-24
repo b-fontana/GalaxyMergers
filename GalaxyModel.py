@@ -52,7 +52,7 @@ def train(filenames, dims, extension):
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    nclasses, nepochs, batch_size = 12, 2, 192
+    nclasses, nepochs, batch_size = 12, 50, 192
     fraction = 0.8 #training fraction
     npics = 0
     for filename in filenames:
@@ -66,8 +66,8 @@ def train(filenames, dims, extension):
 
     dataset = BData().load_tfrec_bonsai(filenames, dims)
     dataset = dataset.shuffle(buffer_size=npics)
-    #train_dataset, test_dataset = BData().split_data(dataset, int(npics*(1-fraction)))
-    train_dataset = dataset.repeat(1)
+    train_dataset, test_dataset = BData().split_data(dataset, int(npics*(1-fraction)))
+    train_dataset = train_dataset.repeat(nepochs+1)
     train_dataset = train_dataset.batch(batch_size)
     train_iterator = train_dataset.make_one_shot_iterator()
 
@@ -79,7 +79,7 @@ def train(filenames, dims, extension):
     else:
         input_shape = (dims[0], dims[1], dims[2])
 
-    #train_callback = Testing(test_dataset, batch_size, int(npics*(1-fraction)), nepochs)
+    train_callback = Testing(test_dataset, int(npics*(1-fraction)), batch_size)
 
     model_input = layers.Input(tensor=x_train, shape=input_shape)
     model_output = nn(model_input, input_shape, nclasses)
@@ -97,8 +97,8 @@ def train(filenames, dims, extension):
               verbose=1,
               callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
                          ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                         #train_callback])
-                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
+                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size),
+                         train_callback])
     model.save(FLAGS.save_model_name)
 
 
