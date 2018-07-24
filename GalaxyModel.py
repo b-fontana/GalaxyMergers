@@ -4,9 +4,9 @@ import tensorflow as tf
 from tensorflow.python.keras.datasets import mnist
 from tensorflow.python.keras.models import Model, load_model
 from tensorflow.python.keras import layers 
-from tensorflow.python.keras.utils import to_categorical
 from tensorflow.python.keras import backend
-from tensorflow.python.keras.losses import categorical_crossentropy
+#from tensorflow.python.keras.losses import categorical_crossentropy
+from tensorflow.python.keras.losses import binary_crossentropy
 from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
 from tensorflow.python.keras.callbacks import TensorBoard
@@ -18,10 +18,11 @@ from PIL import Image
 from Modules.Data import Data as BData
 from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
+from Modules.Callbacks import Testing
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
     
-def nn_sequential(inputs, shape, nclass):
+def nn(inputs, shape, nclass):
     """
     Creates and returns neural net model
     """
@@ -42,7 +43,8 @@ def nn_sequential(inputs, shape, nclass):
     #x = layers.Dropout(0.5)(x)
     x = layers.Dense(128, activation='relu')(x)
     x = layers.Dropout(0.5)(x)
-    x = layers.Dense(nclass, activation='softmax')(x)
+    #x = layers.Dense(nclass, activation='softmax')(x)
+    x = layers.Dense(nclass, activation='sigmoid')(x)
     return x
 
 def train(filenames, dims, extension):
@@ -50,51 +52,75 @@ def train(filenames, dims, extension):
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    nclasses, nepochs, batch_size = 2, 10, 192
+    nclasses, nepochs, batch_size = 12, 2, 192
+    fraction = 0.8 #training fraction
     npics = 0
     for filename in filenames:
         for record in tf.python_io.tf_record_iterator(filename):
             npics += 1
+    steps_per_epoch = int((npics+batch_size-1)/batch_size)
 
-    dataset = BData().load_from_tfrecord(filenames, nclasses, dims)
+    print()
+    print("STEPS_PER_EPOCH:", steps_per_epoch)
+    print()
+
+    dataset = BData().load_tfrec_bonsai(filenames, dims)
     dataset = dataset.shuffle(buffer_size=npics)
-    dataset = dataset.repeat(nepochs)
-    dataset = dataset.batch(batch_size)
-    iterator = dataset.make_one_shot_iterator()
-    
-    x, y = iterator.get_next()
-    
+    #train_dataset, test_dataset = BData().split_data(dataset, int(npics*(1-fraction)))
+    train_dataset = dataset.repeat(1)
+    train_dataset = train_dataset.batch(batch_size)
+    train_iterator = train_dataset.make_one_shot_iterator()
+
+    x_train, y_train = train_iterator.get_next()
+    print("y_train shape:", y_train.shape)
+
     if backend.image_data_format() == 'channels_first':
-        input_shape = (depth, img_rows, img_cols)
+        input_shape = (dims[2], dims[0], dims[1])
     else:
         input_shape = (dims[0], dims[1], dims[2])
 
-        model_input = layers.Input(tensor=x, shape=(dims[0], dims[1], dims[2]))
-        model_output = nn_sequential(model_input, input_shape, nclasses)
-        model = Model(inputs=model_input, outputs=model_output)
-        model.compile(optimizer='adam',
-                      loss=categorical_crossentropy,
-                      metrics=['accuracy'],
-                      target_tensors=[y])    
-        model.summary()
-        print("STEPS_PER_EPOCH:", int((npics+batch_size-1)/batch_size))
-        print("NPICS:", npics)
-        print("BATCH_SIZE:", batch_size)
-        model.fit(shuffle=True,
-                  epochs=nepochs,
-                  steps_per_epoch=int((npics+batch_size-1)/batch_size),
-                  verbose=1,
-                  callbacks=[EarlyStopping(monitor='loss', min_delta=0.00001, patience=5),
-                             #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                             TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
+    #train_callback = Testing(test_dataset, batch_size, int(npics*(1-fraction)), nepochs)
 
-        model.save(FLAGS.save_model_name)
+    model_input = layers.Input(tensor=x_train, shape=input_shape)
+    model_output = nn(model_input, input_shape, nclasses)
+    model = Model(inputs=model_input, outputs=model_output)
+
+    model.compile(optimizer='adam',
+                  #loss=categorical_crossentropy,
+                  loss=binary_crossentropy, #squash labels between 0 and 1 for using sigmoid
+                  metrics=['accuracy'],
+                  target_tensors=[y_train])
+    model.summary()
+    model.fit(shuffle=True,
+              epochs=nepochs,
+              steps_per_epoch=steps_per_epoch,
+              verbose=1,
+              callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
+                         ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+                         #train_callback])
+                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
+    model.save(FLAGS.save_model_name)
 
 
 def predict(picture_names, dims):
     """
     Return the predictions for the input_pictures.
     """
+    param_names = ['vr', 'vt', 'vt_phi', 'size_ratio', 'mass_ratio', 'Rsep',
+                   'lMW', 'bMW', 'lM31', 'bM31', 'lR', 'bR']
+    param_values = [[-130., -90., -50.],               #vr
+                    [10., 20., 30.],                   #vt
+                    [-45., 0., 45.],                   #vt_phi
+                    [0.25, 0.5, 0.75, 1., 1.25, 1.5],  #size_ratio
+                    [0.25, 0.5, 0.75, 1., 1.25, 1.5],  #mass_ratio
+                    [778., 788., 798.],                #Rsep
+                    [0., 90., 180.],                   #lMW
+                    [-90., 0., 90.],                   #bMW
+                    [200., 220., 240.],                #lM31
+                    [-90., -60., -30.],                #bM31
+                    [120., 121., 122.],                #lR
+                    [-25., -23., -21.]]                #bR
+
     model = load_model(FLAGS.saved_model_name)
     print("Model being used:", FLAGS.saved_model_name)
     picture_array = np.zeros((len(picture_names), dims[0], dims[1], dims[2]), dtype=np.float32)
@@ -106,14 +132,15 @@ def predict(picture_names, dims):
         for i,name in enumerate(picture_names):
             picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
             picture_array[i] = np.array(picture_array[i], dtype=np.float32)
-#            picture_array[i] = picture_array[i].astype('float32') 
             picture_array[i] /= 255
-            
-        print(picture_array[0])
-    print(np.amax(picture_array[0]))
-    print(np.amin(picture_array[0]))
-
-    print(model.predict(picture_array, verbose=0))
+    predictions = model.predict(picture_array, verbose=0).flatten()
+    max1 = np.amax(predictions[:6])
+    max2 = np.amax(predictions[6:])
+    print(predictions)
+    idx1 = np.where(predictions==max1)[0][0]
+    idx2 = np.where(predictions==max2)[0][0]-6
+    print("I think the size ratio is", param_values[param_names.index('size_ratio')][idx1])
+    print("I think the mass ratio is", param_values[param_names.index('mass_ratio')][idx2])
 
     
 def main(_):
@@ -127,13 +154,10 @@ def main(_):
     3. Tensorflow, Keras and Python online documentation
     """
     ###Parsed arguments checks###
-    if FLAGS.mode == "save" or (FLAGS.mode == "train" and FLAGS.use_saved_data == 0):
+    if FLAGS.mode == "save":
         data_extension = os.path.splitext(FLAGS.save_data_name)[1]
         if data_extension != ".tfrecord":
             print("The extensions of the file name inserted could not be accepted.")
-            sys.exit()
-        if FLAGS.use_saved_data != 0 and FLAGS.use_saved_data != 1:
-            print("The 'use_saved_data' is a boolean. Only the '0' and '1' values can be accepted.")
             sys.exit()
         if FLAGS.cutmin >= FLAGS.cutmax:
             print("The 'cutmin' option has to be smaller than the 'cutmax' option.")
@@ -184,16 +208,13 @@ def main(_):
 
     dims_tuple = (300, 300, FLAGS.input_depth)
     ###Saving the data if requested###
-    if FLAGS.use_saved_data == 0 and (FLAGS.mode == 'train' or FLAGS.mode == 'save'):
-        myclasses = ('before', 'during')
-        mypath = "/data1/alves/"+FLAGS.data_to_convert
-        GalaxyData.save_to_tfrecord(mypath, myclasses, 
-                                    FLAGS.save_data_name,
-                                    dims_tuple,
-                                    FLAGS.cutmin, FLAGS.cutmax, 'jpg')
-    
-    ###Training or predicting###
-    if FLAGS.mode == 'train':
+    if FLAGS.mode == 'save':
+        print(FLAGS.data_to_convert)
+        GalaxyData.save_tfrec_bonsai(FLAGS.data_to_convert, 
+                                     FLAGS.save_data_name, 
+                                     dims_tuple,
+                                     'jpg')
+    elif FLAGS.mode == 'train':
         train(FLAGS.saved_data_name, dims_tuple, 'jpg')
     elif FLAGS.mode == 'predict':
         if not os.path.isfile(FLAGS.saved_model_name):
@@ -239,7 +260,7 @@ def prediction_list():
             '/data1/alves/GalaxyZoo/merger/validation_588295842319630367.jpeg',
             '/data1/alves/GalaxyZoo/merger/training_587728949052506236.jpeg',
             '/data1/alves/GalaxyZoo/merger/training_588015507680723008.jpeg']
-    """
+
     return ['/data1/alves/contours/GalaxyZoo/merger/validation_588023046401818861_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/merger/training_587736753004478741_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/merger/validation_588023046401818862_contour.jpeg',
@@ -269,6 +290,10 @@ def prediction_list():
             '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568710160617_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588848900467392548_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738574610497709_contour.jpeg']
+    """
+    #return ["/data1/LEAPSData/LEAPS1bf/bonsai_simulations/s_0.5_m_0.5_lMW_0_bMW_90/outFile-00315-13.jpg"]
+    return ["/data1/LEAPSData/LEAPS1bf/bonsai_simulations/s_0.25_m_0.75_lMW_0_bMW_90/outFile-00310-00.jpg"]
+    #return ['mug.jpg']
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

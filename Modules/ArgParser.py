@@ -2,11 +2,6 @@ def add_args(parser):
    """
    """
    parser.add_argument(
-      '--use_saved_data',
-      type=int,
-      help='Imports (or not) the TFRecords file containing previously saved data. This saves a lot of computational time. Default: 0'
-   )
-   parser.add_argument(
       '--mode',
       type=str,
       default='train',
@@ -19,8 +14,9 @@ def add_args(parser):
    )
    parser.add_argument(
       '--data_to_convert',
+      nargs='+',
       type=str,
-      help="Name of the folder where the pictures to be converted to the '.tfrecord' format are stored. It is assumed that that folder can be found in /data1/alves/. Note that the classes have to be stored in different folders inside the specified 'data_to_convert' folder. By default, the two classes being conisdered are 'before' and 'during'."
+      help="Name of the folder where the pictures to be converted to the '.tfrecord' format are stored. It is assumed that that folder can be found in /data1/alves/."
    )
    parser.add_argument(
       '--saved_model_name',
