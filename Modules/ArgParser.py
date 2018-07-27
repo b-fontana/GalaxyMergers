@@ -1,6 +1,4 @@
 def add_args(parser):
-   """
-   """
    parser.add_argument(
       '--mode',
       type=str,
@@ -57,4 +55,32 @@ def add_args(parser):
       default=3,
       help="Select '1' for grey-scale or '3' for RGB. This does not perform any convertion; it just slices the numpy array such that only the first column is considered when evaluating the tensors."
    )
+   parser.add_argument(
+      '--file_train_metrics',
+      type=str,
+      help='Name of the file where the train metrics are stored.'
+   )
+   parser.add_argument(
+      '--file_test_metrics',
+      type=str,
+      help='Name of the file where the test metrics are stored.'
+   )
+   parser.add_argument(
+      '--prediction_list',
+      nargs='+',
+      type=str,
+      help="File name(s) for prediction."
+   )
+   parser.add_argument(
+      '--prediction_sr',
+      nargs='+',
+      type=str,
+      help="Size ratio for checking the predictions."
+   )
+   parser.add_argument(
+      '--prediction_mr',
+      nargs='+',
+      type=str,
+      help="Mass ratio for checking the predictions."
+  )
    return parser.parse_known_args()

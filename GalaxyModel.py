@@ -18,7 +18,7 @@ from PIL import Image
 from Modules.Data import Data as BData
 from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
-from Modules.Callbacks import Testing
+from Modules.Callbacks import Testing, WriteTrainMetrics
 
 os.environ["CUDA_VISIBLE_DEVICES"]="3"
     
@@ -32,15 +32,11 @@ def nn(inputs, shape, nclass):
                           data_format=backend.image_data_format(),
                           input_shape=shape)(inputs)
     x = layers.Conv2D(32, kernel_size=(3, 3), activation='relu',
-                      padding='valid')(x)
-    x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
-    #x = layers.Conv2D(128, kernel_size=(3, 3), activation='relu',
-                      #padding='valid')(x)
-    #x = layers.MaxPooling2D(pool_size=(2, 2), strides=(2,2))(x)
+                          padding='valid')(x)
+    x = layers.MaxPooling2D(pool_size=(2, 2), 
+                            strides=(2,2))(x)
     x = layers.Dropout(0.5)(x)
     x = layers.Flatten()(x)
-    #x = layers.Dense(256, activation='relu')(x)
-    #x = layers.Dropout(0.5)(x)
     x = layers.Dense(128, activation='relu')(x)
     x = layers.Dropout(0.5)(x)
     #x = layers.Dense(nclass, activation='softmax')(x)
@@ -52,22 +48,20 @@ def train(filenames, dims, extension):
     Trains a model using Keras.
     Expects numpy arrays with values between 0 and 255.
     """
-    nclasses, nepochs, batch_size = 12, 50, 192
+    nclasses, nepochs, batch_size = 12, 200, 192
     fraction = 0.8 #training fraction
     npics = 0
     for filename in filenames:
         for record in tf.python_io.tf_record_iterator(filename):
             npics += 1
-    steps_per_epoch = int((npics+batch_size-1)/batch_size)
-
-    print()
-    print("STEPS_PER_EPOCH:", steps_per_epoch)
-    print()
+    npics_train = int(npics*fraction)
+    npics_test = npics - npics_train
+    steps_per_epoch = int((npics_train+batch_size-1)/batch_size)-1
 
     dataset = BData().load_tfrec_bonsai(filenames, dims)
     dataset = dataset.shuffle(buffer_size=npics)
-    train_dataset, test_dataset = BData().split_data(dataset, int(npics*(1-fraction)))
-    train_dataset = train_dataset.repeat(nepochs+1)
+    dataset = dataset.repeat(nepochs+1)
+    train_dataset, test_dataset = BData().split_data(dataset, npics_test)
     train_dataset = train_dataset.batch(batch_size)
     train_iterator = train_dataset.make_one_shot_iterator()
 
@@ -79,7 +73,11 @@ def train(filenames, dims, extension):
     else:
         input_shape = (dims[0], dims[1], dims[2])
 
-    train_callback = Testing(test_dataset, int(npics*(1-fraction)), batch_size)
+    test_callback = Testing(test_dataset, 
+                             int(npics*(1-fraction)), 
+                             batch_size,
+                             FLAGS.file_test_metrics)
+    print_callback = WriteTrainMetrics(FLAGS.file_train_metrics)
 
     model_input = layers.Input(tensor=x_train, shape=input_shape)
     model_output = nn(model_input, input_shape, nclasses)
@@ -98,13 +96,14 @@ def train(filenames, dims, extension):
               callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
                          ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
                          TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size),
-                         train_callback])
+                         print_callback,
+                         test_callback])
     model.save(FLAGS.save_model_name)
 
 
-def predict(picture_names, dims):
+def predict(picture_file, dims):
     """
-    Return the predictions for the input_pictures.
+    Return the predictions for pictures specified ina file.
     """
     param_names = ['vr', 'vt', 'vt_phi', 'size_ratio', 'mass_ratio', 'Rsep',
                    'lMW', 'bMW', 'lM31', 'bM31', 'lR', 'bR']
@@ -121,11 +120,20 @@ def predict(picture_names, dims):
                     [120., 121., 122.],                #lR
                     [-25., -23., -21.]]                #bR
 
+    picture_names, size_ratios, mass_ratios = [], [], []
+    with open(picture_file, 'rt') as f:
+        for line in f:
+            tmp1, tmp2, tmp3 = line.split(" ")
+            picture_names.append(tmp1)
+            size_ratios.append(float(tmp2))
+            mass_ratios.append(float(tmp3[:-1]))
+    
+    perfect_counter = 0
+    half_perfect_counter = 0
     model = load_model(FLAGS.saved_model_name)
     print("Model being used:", FLAGS.saved_model_name)
     picture_array = np.zeros((len(picture_names), dims[0], dims[1], dims[2]), dtype=np.float32)
     graph, nameholder, image_tensor = BPic().tf_decoder(dims)
-
     with tf.Session(graph=graph) as sess:
         init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
         sess.run(init)
@@ -133,15 +141,29 @@ def predict(picture_names, dims):
             picture_array[i] = sess.run(image_tensor, feed_dict={nameholder: name})
             picture_array[i] = np.array(picture_array[i], dtype=np.float32)
             picture_array[i] /= 255
-    predictions = model.predict(picture_array, verbose=0).flatten()
-    max1 = np.amax(predictions[:6])
-    max2 = np.amax(predictions[6:])
-    print(predictions)
-    idx1 = np.where(predictions==max1)[0][0]
-    idx2 = np.where(predictions==max2)[0][0]-6
-    print("I think the size ratio is", param_values[param_names.index('size_ratio')][idx1])
-    print("I think the mass ratio is", param_values[param_names.index('mass_ratio')][idx2])
+            if i%500==0: print(i)
 
+    print("Start")
+    predictions = model.predict(picture_array, verbose=1)
+    print("End")
+    for i in range(len(picture_names)):
+        print(i)
+        max1 = np.amax(predictions[i][:6])
+        max2 = np.amax(predictions[i][6:])
+        #print("All values:", predictions[i])
+        idx1 = np.where(predictions[i]==max1)[0][0]
+        idx2 = np.where(predictions[i]==max2)[0][0]-6
+        pred1 = param_values[param_names.index('size_ratio')][idx1] 
+        pred2 = param_values[param_names.index('mass_ratio')][idx2]
+        print("Picture name:", picture_names[i])
+        print("---|Predictions|---   Size ratio: %.2f   Mass ratio: %.2f" % 
+              (pred1, pred2))
+        if size_ratios[i] == pred1 and mass_ratios[i] == pred2:
+            perfect_counter += 1
+        elif size_ratios[i] == pred1 or mass_ratios[i] == pred2:
+            half_perfect_counter += 1
+    print("Perfect accuracy:", float(perfect_counter)/float(len(picture_names)))
+    print("Half perfect accuracy:", float(half_perfect_counter)/float(len(picture_names)))
     
 def main(_):
     """
@@ -201,6 +223,7 @@ def main(_):
     print("Cutmin:", FLAGS.cutmin)
     print("Cutmax:", FLAGS.cutmax)
     print("RGB:", FLAGS.input_depth)
+    print("Metrics' file name:", FLAGS.file_train_metrics)
     print("#################################################")
     print()
 
@@ -220,14 +243,16 @@ def main(_):
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
-        predict(prediction_list(), dims_tuple)
+            
+        predict("prediction_list.txt", dims_tuple)
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")
         sys.exit()
 
 def prediction_list():
-    """return ['/data1/alves/GalaxyZoo/noninteracting/training_587738947752099924.jpeg',
+    """
+    return ['/data1/alves/GalaxyZoo/noninteracting/training_587738947752099924.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/test_587724650336485508.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/test_587722982297633240.jpeg',
             '/data1/alves/GalaxyZoo/noninteracting/training_587729160042119287.jpeg',
@@ -290,11 +315,9 @@ def prediction_list():
             '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738568710160617_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/noninteracting/validation_588848900467392548_contour.jpeg',
             '/data1/alves/contours/GalaxyZoo/noninteracting/training_587738574610497709_contour.jpeg']
+   
     """
-    #return ["/data1/LEAPSData/LEAPS1bf/bonsai_simulations/s_0.5_m_0.5_lMW_0_bMW_90/outFile-00315-13.jpg"]
-    return ["/data1/LEAPSData/LEAPS1bf/bonsai_simulations/s_0.25_m_0.75_lMW_0_bMW_90/outFile-00310-00.jpg"]
-    #return ['mug.jpg']
-
+   
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     FLAGS, unparsed = add_args(parser)

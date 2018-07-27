@@ -127,13 +127,12 @@ class Data:
             init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
             sess.run(init)
             for iFileName,FileName in enumerate(FileNames):
-                pic_path = os.path.join(FileName, "bonsai_simulations/s_*")
+                pic_path = os.path.join(FileName, "/s_*")
                 folders = glob.glob(pic_path)
                 
                 for i_folder, folder in enumerate(folders):
 
-                    json_file_name = os.path.join(FileName, "bonsai_simulations", 
-                                                  folder, "params.json")
+                    json_file_name = os.path.join(FileName, folder, "params.json")
                     bufstr = ctypes.create_string_buffer(bytes(json_file_name, encoding='utf-8'))
                     lib.get_json_bonsai_reader_size.restype = ctypes.c_int
                     reader_size = lib.get_json_bonsai_reader_size()
