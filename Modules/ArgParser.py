@@ -27,10 +27,16 @@ def add_args(parser):
       help="File name where the data is going to be saved. It must have a 'tfrecord' extension."
    )
    parser.add_argument(
-      '--saved_data_name',
+      '--saved_train_data',
       nargs='+',
       type=str,
-      help="File name(s) where the data was saved. They must have a 'tfrecord' extension."
+      help="File name(s) where the training data was saved. They must have a 'tfrecord' extension."
+   )
+   parser.add_argument(
+      '--saved_valid_data',
+      nargs='+',
+      type=str,
+      help="File name(s) where the validation data was saved. They must have a 'tfrecord' extension."
    )
    parser.add_argument(
       '--cutmin',
@@ -56,20 +62,14 @@ def add_args(parser):
       help="Select '1' for grey-scale or '3' for RGB. This does not perform any convertion; it just slices the numpy array such that only the first column is considered when evaluating the tensors."
    )
    parser.add_argument(
-      '--file_train_metrics',
+      '--file_metrics',
       type=str,
-      help='Name of the file where the train metrics are stored.'
+      help='Name of the file where the metrics are stored.'
    )
    parser.add_argument(
-      '--file_test_metrics',
+      '--prediction_file',
       type=str,
-      help='Name of the file where the test metrics are stored.'
-   )
-   parser.add_argument(
-      '--prediction_list',
-      nargs='+',
-      type=str,
-      help="File name(s) for prediction."
+      help="File name for prediction."
    )
    parser.add_argument(
       '--prediction_sr',

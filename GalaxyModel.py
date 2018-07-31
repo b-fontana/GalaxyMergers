@@ -10,6 +10,7 @@ from tensorflow.python.keras.losses import binary_crossentropy
 from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
 from tensorflow.python.keras.callbacks import TensorBoard
+from keras.utils.vis_utils import plot_model
 
 import os, sys, glob, argparse
 import numpy as np
@@ -18,7 +19,7 @@ from PIL import Image
 from Modules.Data import Data as BData
 from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
-from Modules.Callbacks import Testing, WriteTrainMetrics
+from Modules.Callbacks import WriteMetrics
 
 os.environ["CUDA_VISIBLE_DEVICES"]="3"
     
@@ -43,61 +44,88 @@ def nn(inputs, shape, nclass):
     x = layers.Dense(nclass, activation='sigmoid')(x)
     return x
 
-def train(filenames, dims, extension):
+def train_validate(train_files, valid_files, dims, extension):
     """
-    Trains a model using Keras.
-    Expects numpy arrays with values between 0 and 255.
+    Trains and validates a model using Keras.
     """
-    nclasses, nepochs, batch_size = 12, 200, 192
-    fraction = 0.8 #training fraction
-    npics = 0
-    for filename in filenames:
+    def make_iterator(dataset):
+        iterator = dataset.make_one_shot_iterator()
+        next_val = iterator.get_next()
+
+        with backend.get_session().as_default() as sess:
+            while True:
+                inputs, labels = sess.run(next_val)
+                yield inputs, labels
+
+
+    nclasses, nepochs, batch_size = 12, 5, 192
+
+    npics_train = 0
+    for filename in train_files:
         for record in tf.python_io.tf_record_iterator(filename):
-            npics += 1
-    npics_train = int(npics*fraction)
-    npics_test = npics - npics_train
-    steps_per_epoch = int((npics_train+batch_size-1)/batch_size)-1
+            npics_train += 1
+    steps_per_epoch_train = int((npics_train+batch_size-1)/batch_size)-1 
 
-    dataset = BData().load_tfrec_bonsai(filenames, dims)
-    dataset = dataset.shuffle(buffer_size=npics)
-    dataset = dataset.repeat(nepochs+1)
-    train_dataset, test_dataset = BData().split_data(dataset, npics_test)
+    npics_valid = 0
+    for filename in valid_files:
+        for record in tf.python_io.tf_record_iterator(filename):
+            npics_valid += 1
+    steps_per_epoch_valid = int((npics_valid+batch_size-1)/batch_size)-1 
+    print("steps:", valid_files)
+
+    train_dataset = BData().load_tfrec_bonsai(train_files, dims)
+    train_dataset = train_dataset.shuffle(buffer_size=npics_train)
+    train_dataset = train_dataset.repeat(nepochs+1)
     train_dataset = train_dataset.batch(batch_size)
-    train_iterator = train_dataset.make_one_shot_iterator()
+    train_iterator = make_iterator(train_dataset)
 
-    x_train, y_train = train_iterator.get_next()
-    print("y_train shape:", y_train.shape)
+    valid_dataset = BData().load_tfrec_bonsai(valid_files, dims)
+    valid_dataset = valid_dataset.shuffle(buffer_size=npics_valid)
+    valid_dataset = valid_dataset.repeat(nepochs+1)
+    valid_dataset = valid_dataset.batch(batch_size)
+    valid_iterator = make_iterator(valid_dataset)
+
+    #x_train, y_train = train_iterator.get_next()
+    #print("y_train shape:", y_train.shape)
 
     if backend.image_data_format() == 'channels_first':
         input_shape = (dims[2], dims[0], dims[1])
     else:
         input_shape = (dims[0], dims[1], dims[2])
 
-    test_callback = Testing(test_dataset, 
-                             int(npics*(1-fraction)), 
-                             batch_size,
-                             FLAGS.file_test_metrics)
-    print_callback = WriteTrainMetrics(FLAGS.file_train_metrics)
-
-    model_input = layers.Input(tensor=x_train, shape=input_shape)
+    #model_input = layers.Input(tensor=x_train, shape=input_shape)
+    model_input = layers.Input(shape=input_shape)
     model_output = nn(model_input, input_shape, nclasses)
     model = Model(inputs=model_input, outputs=model_output)
-
+    plot_model(model, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
     model.compile(optimizer='adam',
                   #loss=categorical_crossentropy,
                   loss=binary_crossentropy, #squash labels between 0 and 1 for using sigmoid
-                  metrics=['accuracy'],
-                  target_tensors=[y_train])
+                  metrics=['accuracy'])
+                  #target_tensors=[y_train])
     model.summary()
+    callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
+               ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+               TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size),
+               WriteMetrics(FLAGS.file_metrics)] #custom callback
+    model.fit_generator(generator=train_iterator, 
+                        validation_data=valid_iterator, 
+                        validation_steps=steps_per_epoch_valid,
+                        epochs=nepochs, 
+                        steps_per_epoch=steps_per_epoch_train, 
+                        callbacks=callbacks, 
+                        verbose=1, 
+                        workers=0)
+    """
     model.fit(shuffle=True,
               epochs=nepochs,
               steps_per_epoch=steps_per_epoch,
               verbose=1,
+#             validation_split=0.2,
               callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
                          ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size),
-                         print_callback,
-                         test_callback])
+                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
+    """
     model.save(FLAGS.save_model_name)
 
 
@@ -189,11 +217,17 @@ def main(_):
         if FLAGS.tensorboard == None:
             print("Please specify the tensorboard folder.")
             sys.exit()
-        if FLAGS.saved_data_name == None:
+        if FLAGS.saved_train_data == None or FLAGS.saved_valid_data == None:
             print("Please provide the name of the file(s) where the pictures will be loaded from.")
             sys.exit()
-        if FLAGS.saved_data_name != None:
-            for filename in FLAGS.saved_data_name:
+        if FLAGS.saved_train_data != None:
+            for filename in FLAGS.saved_train_data:
+                data_extension = os.path.splitext(filename)[1]
+                if data_extension != ".tfrecord":
+                    print("The extensions of the file name(s) inserted could not be accepted.")
+                    sys.exit()
+        if FLAGS.saved_valid_data != None:
+            for filename in FLAGS.saved_valid_data:
                 data_extension = os.path.splitext(filename)[1]
                 if data_extension != ".tfrecord":
                     print("The extensions of the file name(s) inserted could not be accepted.")
@@ -215,7 +249,8 @@ def main(_):
     print("############Arguments##Info######################")
     print("Mode:", FLAGS.mode)
     print("Data to convert:", FLAGS.data_to_convert)
-    print("Saved data name:", FLAGS.saved_data_name)
+    print("Saved train data name:", FLAGS.saved_train_data)
+    print("Saved valid data name:", FLAGS.saved_valid_data)
     print("Save data name:", FLAGS.save_data_name)
     print("Saved model name:", FLAGS.saved_model_name)
     print("Save model name:", FLAGS.save_model_name)
@@ -223,7 +258,7 @@ def main(_):
     print("Cutmin:", FLAGS.cutmin)
     print("Cutmax:", FLAGS.cutmax)
     print("RGB:", FLAGS.input_depth)
-    print("Metrics' file name:", FLAGS.file_train_metrics)
+    print("Metrics' file name:", FLAGS.file_metrics)
     print("#################################################")
     print()
 
@@ -232,19 +267,18 @@ def main(_):
     dims_tuple = (300, 300, FLAGS.input_depth)
     ###Saving the data if requested###
     if FLAGS.mode == 'save':
-        print(FLAGS.data_to_convert)
         GalaxyData.save_tfrec_bonsai(FLAGS.data_to_convert, 
                                      FLAGS.save_data_name, 
                                      dims_tuple,
                                      'jpg')
     elif FLAGS.mode == 'train':
-        train(FLAGS.saved_data_name, dims_tuple, 'jpg')
+        train_validate(FLAGS.saved_train_data, FLAGS.saved_valid_data, dims_tuple, 'jpg')
     elif FLAGS.mode == 'predict':
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
             sys.exit()
             
-        predict("prediction_list.txt", dims_tuple)
+        predict(FLAGS.prediction_file, dims_tuple)
     else: #if the mode is 'save' there is nothing else to do
         if FLAGS.mode != 'save':
             print("The specified mode is not supported. \n Currently two options are supported: 'train' and 'predict'.")

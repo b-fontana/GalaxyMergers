@@ -127,11 +127,10 @@ class Data:
             init = tf.group( tf.global_variables_initializer(), tf.local_variables_initializer() )
             sess.run(init)
             for iFileName,FileName in enumerate(FileNames):
-                pic_path = os.path.join(FileName, "/s_*")
+                pic_path = FileName+"s_*"
                 folders = glob.glob(pic_path)
-                
+                print(folders)
                 for i_folder, folder in enumerate(folders):
-
                     json_file_name = os.path.join(FileName, folder, "params.json")
                     bufstr = ctypes.create_string_buffer(bytes(json_file_name, encoding='utf-8'))
                     lib.get_json_bonsai_reader_size.restype = ctypes.c_int
@@ -141,12 +140,20 @@ class Data:
                     lib.json_bonsai_reader(ctypes.c_char_p(ctypes.addressof(bufstr)), 
                                            ctypes.c_void_p(parameters.ctypes.data))
                     pics = glob.glob(os.path.join(folder,"*."+Extension))
-            
-                    split1, split2 = DataName.split('.') 
-                    folder_name = split1+str(i_folder)+"_"+str(iFileName)+"."+split2
-                    
-                    with tf.python_io.TFRecordWriter(folder_name) as Writer:
-                        for i_pic, pic in enumerate(pics):
+                    split = DataName.split('/') 
+                    fraction = 0.2
+                    valid_number = int(len(pics)*fraction)
+                    valid_pics = np.random.choice(np.array(pics), valid_number, replace=False)
+                    train_pics = np.setdiff1d(pics,valid_pics)
+                    valid_pics = valid_pics.tolist()
+                    train_pics = train_pics.tolist()
+
+                    folder_name_train = split[0]+"/Train/"+split[1].split('.')[0]
+                    folder_name_train += str(i_folder)+"_"+str(iFileName)+".tfrecord"
+                    print("Writing to", folder_name_train)
+                
+                    with tf.python_io.TFRecordWriter(folder_name_train) as Writer:
+                        for i_pic, pic in enumerate(train_pics):
                             pic_raw = sess.run(image_tensor, feed_dict={nameholder: pic} )
                             Example = tf.train.Example(features=tf.train.Features(feature={
                                 'picture_raw': _bytes_feature(pic_raw.tostring()),
@@ -165,6 +172,29 @@ class Data:
                             }))
                             Writer.write(Example.SerializeToString())
 
+                    folder_name_valid = split[0]+"/Validation/"+split[1].split('.')[0]
+                    folder_name_valid += str(i_folder)+"_"+str(iFileName)+".tfrecord"
+                    print("Writing to", folder_name_valid)
+               
+                    with tf.python_io.TFRecordWriter(folder_name_valid) as Writer:
+                        for i_pic, pic in enumerate(valid_pics):
+                            pic_raw = sess.run(image_tensor, feed_dict={nameholder: pic} )
+                            Example = tf.train.Example(features=tf.train.Features(feature={
+                                'picture_raw': _bytes_feature(pic_raw.tostring()),
+                                'vr_idx': _int64_feature(parameter_idx('vr', parameters[0])),
+                                'vt_idx': _int64_feature(parameter_idx('vt', parameters[1])),
+                                'vt_phi_idx': _int64_feature(parameter_idx('vt_phi', parameters[2])),
+                                'size_ratio_idx': _int64_feature(parameter_idx('size_ratio',parameters[3])),
+                                'mass_ratio_idx': _int64_feature(parameter_idx('mass_ratio',parameters[4])),
+                                'Rsep_idx': _int64_feature(parameter_idx('Rsep', parameters[5])),
+                                'lMW_idx': _int64_feature(parameter_idx('lMW', parameters[6])),
+                                'bMW_idx': _int64_feature(parameter_idx('bMW', parameters[7])),
+                                'lM31_idx': _int64_feature(parameter_idx('lM31', parameters[8])),
+                                'bM31_idx': _int64_feature(parameter_idx('bM31', parameters[9])),
+                                'lR_idx': _int64_feature(parameter_idx('lR', parameters[10])),
+                                'bR_idx': _int64_feature(parameter_idx('bR', parameters[11]))
+                            }))
+                            Writer.write(Example.SerializeToString())
 
     def load_tfrec(self, filenames, class_number, dims):
         """
