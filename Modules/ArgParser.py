@@ -39,6 +39,12 @@ def add_args(parser):
       help="File name(s) where the validation data was saved. They must have a 'tfrecord' extension."
    )
    parser.add_argument(
+      '--saved_test_data',
+      nargs='+',
+      type=str,
+      help="File name(s) where the testing data was saved. They must have a 'tfrecord' extension."
+   )
+   parser.add_argument(
       '--cutmin',
       type=int,
       default=0,

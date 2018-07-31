@@ -44,7 +44,7 @@ def nn(inputs, shape, nclass):
     x = layers.Dense(nclass, activation='sigmoid')(x)
     return x
 
-def train_validate(train_files, valid_files, dims, extension):
+def train_validate_test(train_files, valid_files, test_files, dims, extension):
     """
     Trains and validates a model using Keras.
     """
@@ -58,7 +58,7 @@ def train_validate(train_files, valid_files, dims, extension):
                 yield inputs, labels
 
 
-    nclasses, nepochs, batch_size = 12, 5, 192
+    nclasses, nepochs, batch_size = 12, 200, 192
 
     npics_train = 0
     for filename in train_files:
@@ -73,6 +73,13 @@ def train_validate(train_files, valid_files, dims, extension):
     steps_per_epoch_valid = int((npics_valid+batch_size-1)/batch_size)-1 
     print("steps:", valid_files)
 
+    npics_test = 0
+    for filename in test_files:
+        for record in tf.python_io.tf_record_iterator(filename):
+            npics_test += 1
+    steps_test = int((npics_test+batch_size-1)/batch_size)-1 
+    print("steps:", test_files)
+
     train_dataset = BData().load_tfrec_bonsai(train_files, dims)
     train_dataset = train_dataset.shuffle(buffer_size=npics_train)
     train_dataset = train_dataset.repeat(nepochs+1)
@@ -80,10 +87,16 @@ def train_validate(train_files, valid_files, dims, extension):
     train_iterator = make_iterator(train_dataset)
 
     valid_dataset = BData().load_tfrec_bonsai(valid_files, dims)
-    valid_dataset = valid_dataset.shuffle(buffer_size=npics_valid)
-    valid_dataset = valid_dataset.repeat(nepochs+1)
+    #valid_dataset = valid_dataset.shuffle(buffer_size=npics_valid)
+    #valid_dataset = valid_dataset.repeat(nepochs+1)
     valid_dataset = valid_dataset.batch(batch_size)
     valid_iterator = make_iterator(valid_dataset)
+
+    test_dataset = BData().load_tfrec_bonsai(test_files, dims)
+    test_dataset = test_dataset.shuffle(buffer_size=npics_test)
+    test_dataset = test_dataset.repeat(nepochs+1)
+    test_dataset = test_dataset.batch(batch_size)
+    test_iterator = make_iterator(test_dataset)
 
     #x_train, y_train = train_iterator.get_next()
     #print("y_train shape:", y_train.shape)
@@ -116,6 +129,12 @@ def train_validate(train_files, valid_files, dims, extension):
                         callbacks=callbacks, 
                         verbose=1, 
                         workers=0)
+    model.evaluate_generator(generator=test_iterator, 
+                             steps=steps_test, 
+                             max_queue_size=10, 
+                             workers=1, 
+                             use_multiprocessing=False, 
+                             verbose=1)
     """
     model.fit(shuffle=True,
               epochs=nepochs,
@@ -251,6 +270,7 @@ def main(_):
     print("Data to convert:", FLAGS.data_to_convert)
     print("Saved train data name:", FLAGS.saved_train_data)
     print("Saved valid data name:", FLAGS.saved_valid_data)
+    print("Saved test data name:", FLAGS.saved_test_data)
     print("Save data name:", FLAGS.save_data_name)
     print("Saved model name:", FLAGS.saved_model_name)
     print("Save model name:", FLAGS.save_model_name)
@@ -272,7 +292,10 @@ def main(_):
                                      dims_tuple,
                                      'jpg')
     elif FLAGS.mode == 'train':
-        train_validate(FLAGS.saved_train_data, FLAGS.saved_valid_data, dims_tuple, 'jpg')
+        train_validate_test(FLAGS.saved_train_data, 
+                            FLAGS.saved_valid_data, 
+                            FLAGS.saved_test_data, 
+                            dims_tuple, 'jpg')
     elif FLAGS.mode == 'predict':
         if not os.path.isfile(FLAGS.saved_model_name):
             print("The saved model could not be found.")
