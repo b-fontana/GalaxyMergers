@@ -46,12 +46,13 @@ class Testing(Callback):
         return
 
 
-class WriteTrainMetrics(Callback):
+class WriteMetrics(Callback):
     def __init__(self, filename):
         self.filename = filename
 
     def on_train_begin(self, logs={}):
         self.f = open(self.filename, 'at') 
         
-    def on_epoch_end(self, epoch, logs={}):
-        self.f.write("%f\t%f\n" % (logs.get('loss'), logs.get('acc')))
+    #def on_epoch_end(self, epoch, logs={}):
+        #self.f.write("%f\t%f\t%f\t%f\n" % (logs.get('loss'), logs.get('categorical_accuracy'),
+        #                                   logs.get('val_loss'), logs.get('val_categorical_accuracy')))

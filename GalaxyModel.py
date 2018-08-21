@@ -5,8 +5,7 @@ from tensorflow.python.keras.datasets import mnist
 from tensorflow.python.keras.models import Model, load_model
 from tensorflow.python.keras import layers 
 from tensorflow.python.keras import backend
-#from tensorflow.python.keras.losses import categorical_crossentropy
-from tensorflow.python.keras.losses import binary_crossentropy
+from tensorflow.python.keras.losses import categorical_crossentropy
 from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.callbacks import EarlyStopping
 from tensorflow.python.keras.callbacks import TensorBoard
@@ -21,7 +20,7 @@ from Modules.Picture import Picture as BPic
 from Modules.ArgParser import add_args
 from Modules.Callbacks import WriteMetrics
 
-os.environ["CUDA_VISIBLE_DEVICES"]="3"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
     
 def nn(inputs, shape, nclass):
     """
@@ -32,6 +31,7 @@ def nn(inputs, shape, nclass):
                           padding='valid',
                           data_format=backend.image_data_format(),
                           input_shape=shape)(inputs)
+    x = layers.Dropout(0.5)(x)
     x = layers.Conv2D(32, kernel_size=(3, 3), activation='relu',
                           padding='valid')(x)
     x = layers.MaxPooling2D(pool_size=(2, 2), 
@@ -40,8 +40,8 @@ def nn(inputs, shape, nclass):
     x = layers.Flatten()(x)
     x = layers.Dense(128, activation='relu')(x)
     x = layers.Dropout(0.5)(x)
-    #x = layers.Dense(nclass, activation='softmax')(x)
-    x = layers.Dense(nclass, activation='sigmoid')(x)
+    #x = layers.Dense(nclass, activation='sigmoid')(x)
+    x = layers.Dense(nclass, activation='softmax')(x)
     return x
 
 def train_validate_test(train_files, valid_files, test_files, dims, extension):
@@ -58,7 +58,7 @@ def train_validate_test(train_files, valid_files, test_files, dims, extension):
                 yield inputs, labels
 
 
-    nclasses, nepochs, batch_size = 12, 200, 192
+    nclasses, nepochs, batch_size = 12, 10, 128
 
     npics_train = 0
     for filename in train_files:
@@ -71,30 +71,30 @@ def train_validate_test(train_files, valid_files, test_files, dims, extension):
         for record in tf.python_io.tf_record_iterator(filename):
             npics_valid += 1
     steps_per_epoch_valid = int((npics_valid+batch_size-1)/batch_size)-1 
-    print("steps:", valid_files)
+    print("steps:", steps_per_epoch_valid, npics_valid)
 
     npics_test = 0
     for filename in test_files:
         for record in tf.python_io.tf_record_iterator(filename):
             npics_test += 1
     steps_test = int((npics_test+batch_size-1)/batch_size)-1 
-    print("steps:", test_files)
-
+    print("steps:", steps_test, npics_test)
+   
     train_dataset = BData().load_tfrec_bonsai(train_files, dims)
     train_dataset = train_dataset.shuffle(buffer_size=npics_train)
-    train_dataset = train_dataset.repeat(nepochs+1)
+    train_dataset = train_dataset.repeat(2*nepochs)
     train_dataset = train_dataset.batch(batch_size)
     train_iterator = make_iterator(train_dataset)
 
     valid_dataset = BData().load_tfrec_bonsai(valid_files, dims)
-    #valid_dataset = valid_dataset.shuffle(buffer_size=npics_valid)
-    #valid_dataset = valid_dataset.repeat(nepochs+1)
+    valid_dataset = valid_dataset.shuffle(buffer_size=npics_valid)
+    valid_dataset = valid_dataset.repeat(2*nepochs)
     valid_dataset = valid_dataset.batch(batch_size)
     valid_iterator = make_iterator(valid_dataset)
-
+   
     test_dataset = BData().load_tfrec_bonsai(test_files, dims)
     test_dataset = test_dataset.shuffle(buffer_size=npics_test)
-    test_dataset = test_dataset.repeat(nepochs+1)
+    test_dataset = test_dataset.repeat(2*nepochs)
     test_dataset = test_dataset.batch(batch_size)
     test_iterator = make_iterator(test_dataset)
 
@@ -111,14 +111,27 @@ def train_validate_test(train_files, valid_files, test_files, dims, extension):
     model_output = nn(model_input, input_shape, nclasses)
     model = Model(inputs=model_input, outputs=model_output)
     plot_model(model, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
+
+    def custom_accuracy(y_true, y_pred):
+        y_true_1 = tf.slice(y_true, [0,0], [batch_size,6])
+        y_true_2 = tf.slice(y_true, [0,6], [batch_size,6]) 
+        y_pred_1 = tf.slice(y_pred, [0,0], [batch_size,6])
+        y_pred_2 = tf.slice(y_pred, [0,6], [batch_size,6])
+
+        equal = backend.equal(backend.equal(backend.argmax(y_true_1, axis=-1),
+                                            backend.argmax(y_pred_1, axis=-1)),
+                              backend.equal(backend.argmax(y_true_2, axis=-1),
+                                            backend.argmax(y_pred_2, axis=-1)))
+        return backend.mean(equal)
+                             
+
     model.compile(optimizer='adam',
-                  #loss=categorical_crossentropy,
-                  loss=binary_crossentropy, #squash labels between 0 and 1 for using sigmoid
-                  metrics=['accuracy'])
+                  loss=categorical_crossentropy, 
+                  metrics=[custom_accuracy, 'categorical_accuracy'])
                   #target_tensors=[y_train])
     model.summary()
-    callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
-               ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
+    callbacks=[#EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
+               #ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
                TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size),
                WriteMetrics(FLAGS.file_metrics)] #custom callback
     model.fit_generator(generator=train_iterator, 
@@ -129,23 +142,14 @@ def train_validate_test(train_files, valid_files, test_files, dims, extension):
                         callbacks=callbacks, 
                         verbose=1, 
                         workers=0)
-    model.evaluate_generator(generator=test_iterator, 
-                             steps=steps_test, 
-                             max_queue_size=10, 
-                             workers=1, 
-                             use_multiprocessing=False, 
-                             verbose=1)
-    """
-    model.fit(shuffle=True,
-              epochs=nepochs,
-              steps_per_epoch=steps_per_epoch,
-              verbose=1,
-#             validation_split=0.2,
-              callbacks=[EarlyStopping(monitor='loss', min_delta=0.000005, patience=5),
-                         ModelCheckpoint(FLAGS.save_model_name, verbose=1, period=1),
-                         TensorBoard(log_dir=FLAGS.tensorboard, batch_size=batch_size)])
-    """
     model.save(FLAGS.save_model_name)
+    test_results = model.evaluate_generator(generator=test_iterator, 
+                                       steps=steps_test, 
+                                       max_queue_size=10, 
+                                       workers=0, 
+                                       use_multiprocessing=False)
+    print('Test loss:', test_results[0])
+    print('Test accuracy:', test_results[1])
 
 
 def predict(picture_file, dims):
@@ -197,12 +201,12 @@ def predict(picture_file, dims):
         print(i)
         max1 = np.amax(predictions[i][:6])
         max2 = np.amax(predictions[i][6:])
-        #print("All values:", predictions[i])
         idx1 = np.where(predictions[i]==max1)[0][0]
         idx2 = np.where(predictions[i]==max2)[0][0]-6
         pred1 = param_values[param_names.index('size_ratio')][idx1] 
         pred2 = param_values[param_names.index('mass_ratio')][idx2]
         print("Picture name:", picture_names[i])
+        print("All values:", predictions[i])
         print("---|Predictions|---   Size ratio: %.2f   Mass ratio: %.2f" % 
               (pred1, pred2))
         if size_ratios[i] == pred1 and mass_ratios[i] == pred2:
